@@ -1,0 +1,7 @@
+streamlit==1.31.0
+pandas==2.2.0
+numpy==1.26.3
+yfinance==0.2.36
+plotly==5.18.0
+scikit-learn==1.4.0
+streamlit-mic-recorder==0.0.8
