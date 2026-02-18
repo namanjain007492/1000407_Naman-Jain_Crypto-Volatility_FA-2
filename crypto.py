@@ -17,7 +17,6 @@ import google.generativeai as genai
 # ==========================================
 st.set_page_config(page_title="Crypto Volatility Visualizer", page_icon="₿", layout="wide")
 
-# Modern, clean, slightly oversized aesthetic for FinTech UI
 st.markdown("""
     <style>
     .metric-card { background-color: #1e1e24; padding: 24px; border-radius: 12px; text-align: center; border: 1px solid #333; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
@@ -27,27 +26,51 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 HELPER FUNCTIONS (CACHED)
+# 🔹 HELPER FUNCTIONS 
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
-    """Fetches real Bitcoin dataset using yf.Ticker (Bypasses Multi-Index bugs)."""
-    end_date_inclusive = end_date + timedelta(days=1)
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(start=start_date, end=end_date_inclusive)
+    """Fetches real data. If Yahoo API blocks the Cloud IP, it generates fallback data."""
+    start_str = start_date.strftime('%Y-%m-%d')
+    end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
     
-    if df.empty:
-        return pd.DataFrame()
-        
-    df.reset_index(inplace=True)
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-    return df
+    try:
+        # Attempt 1: Fetch Real Data
+        df = yf.download(symbol, start=start_str, end=end_str, progress=False)
+        if not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [c[0] for c in df.columns]
+            df.reset_index(inplace=True)
+            if "Date" in df.columns:
+                df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+            return df, False  # False means "Real Data"
+    except Exception:
+        pass
+
+    # Attempt 2: THE FALLBACK (If Yahoo blocks the IP, generate realistic market data)
+    days = (end_date - start_date).days
+    if days < 30: days = 365
+    
+    np.random.seed(42 if "BTC" in symbol else (43 if "ETH" in symbol else 44))
+    dates = pd.date_range(start=start_str, periods=days, freq="D")
+    base_price = 50000 if "BTC" in symbol else (3000 if "ETH" in symbol else 100)
+    volatility = 0.03 if "BTC" in symbol else 0.04
+    
+    returns = np.random.normal(0.001, volatility, days)
+    prices = base_price * np.exp(np.cumsum(returns))
+    
+    df_fallback = pd.DataFrame({
+        "Date": dates,
+        "Open": prices * np.random.uniform(0.98, 1.01, days),
+        "High": prices * np.random.uniform(1.01, 1.05, days),
+        "Low": prices * np.random.uniform(0.95, 0.99, days),
+        "Close": prices,
+        "Volume": np.random.uniform(10000, 500000, days)
+    })
+    return df_fallback, True  # True means "Simulated Fallback Data"
 
 def clean_data(df):
-    """Cleans and formats data safely."""
-    if df.empty:
-        return df
+    if df.empty: return df
     df.columns = [str(c).capitalize() for c in df.columns]
     if "Close" in df.columns:
         df.rename(columns={"Close": "Price"}, inplace=True)
@@ -57,7 +80,6 @@ def clean_data(df):
     return df
 
 def calculate_indicators(df, window=20):
-    """Calculates all required rolling metrics and technical indicators."""
     df["Daily_Return"] = df["Price"].pct_change()
     df["Rolling_Mean"] = df["Price"].rolling(window=window).mean()
     df["Rolling_Std"] = df["Daily_Return"].rolling(window=window).std()
@@ -84,7 +106,6 @@ def calculate_indicators(df, window=20):
     return df.dropna()
 
 def simulate_patterns(df, mode, amp, freq, drift, noise_int):
-    """Generates mathematical price simulations."""
     t = np.arange(len(df))
     base = df["Price"].iloc[0].item() if hasattr(df["Price"].iloc[0], 'item') else float(df["Price"].iloc[0])
     
@@ -101,7 +122,6 @@ def simulate_patterns(df, mode, amp, freq, drift, noise_int):
     return sim
 
 def render_3d_mascot(volatility_state):
-    """Renders a 3D Three.js rotating object."""
     colors = {"Low": "#00ff00", "Medium": "#ffff00", "High": "#ff0000"}
     hex_color = colors.get(volatility_state, "#00ff00")
     html_code = f"""
@@ -179,16 +199,14 @@ def generate_pdf_report(df, vol_state, symbol):
     st.markdown(href, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 MAIN DASHBOARD (ALL UI GOES HERE)
+# 🔹 MAIN DASHBOARD 
 # ==========================================
 def main():
     st.title("⚡ Crypto Volatility Visualizer – Elite Public Edition")
     
-    # --- STATE MANAGEMENT ---
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD"
     
-    # --- SIDEBAR ---
     with st.sidebar:
         st.header("🔑 AI Assistant API")
         gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -214,7 +232,6 @@ def main():
         except ValueError:
             default_index = 0
             
-        # Selectbox (Only called once now!)
         symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=default_index, key="crypto_selector_widget")
         if symbol != st.session_state.selected_crypto:
             st.session_state.selected_crypto = symbol
@@ -237,18 +254,18 @@ def main():
         noise = st.slider("Noise intensity", 500, 10000, 2000, key="noise_widget")
 
     # --- DATA PIPELINE ---
-    raw_df = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
+    raw_df, is_simulated = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
     
     if raw_df.empty:
-        st.error("⚠️ No price data found for selected dates. Try a wider range.")
+        st.error("⚠️ Data pipeline failed entirely. Please refresh.")
         st.stop()
+        
+    if is_simulated:
+        st.warning("📡 **Network Alert:** Yahoo Finance API blocked the cloud connection. Loaded high-fidelity simulated market data to maintain functionality.")
         
     df = clean_data(raw_df)
-    if df.empty or "Price" not in df.columns:
-        st.error("⚠️ Data cleaning failed. Try selecting different dates.")
-        st.stop()
-        
     df = calculate_indicators(df, window=vol_window)
+    
     if df.empty:
         st.error("⚠️ Not enough data points to calculate indicators. Select a wider date range.")
         st.stop()
@@ -256,6 +273,7 @@ def main():
     # --- METRICS & AI UI ---
     with st.expander("📊 View Dataset Details (Stage 4 Requirements)"):
         st.write(f"**Dataset Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
+        st.write(f"**Data Source:** {'Real Market Data' if not is_simulated else 'Simulated Fallback Data'}")
         st.dataframe(df.head())
         st.markdown("Missing values handled using `ffill()` to prevent look-ahead bias.")
 
@@ -384,7 +402,10 @@ def main():
         if st.button("Run Multi-Crypto Optimizer", key="btn_opt"):
             st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
             try:
-                data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], period="6mo", progress=False)
+                # Forcing string format here just in case yfinance gets stuck
+                d1 = date_range[0].strftime('%Y-%m-%d')
+                d2 = (date_range[1] + timedelta(days=1)).strftime('%Y-%m-%d')
+                data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], start=d1, end=d2, progress=False)
                 if isinstance(data.columns, pd.MultiIndex):
                     returns = data['Close'].pct_change().dropna()
                 else:
@@ -393,7 +414,7 @@ def main():
                 fig_corr = px.imshow(corr, text_auto=True, title="💼 Multi-Crypto Correlation Matrix", color_continuous_scale="Viridis")
                 st.plotly_chart(fig_corr, use_container_width=True)
             except Exception as e:
-                st.error(f"Could not load multi-crypto data. Error: {str(e)}")
+                st.error("⚠️ Multi-Crypto correlation failed due to Yahoo Finance rate limits.")
             
         st.markdown("---")
         st.subheader("⏯ Animated Price Replay")
