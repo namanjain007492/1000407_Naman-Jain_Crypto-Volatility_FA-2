@@ -30,6 +30,7 @@ st.markdown("""
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
+    """Fetches real data. If Yahoo API blocks the Cloud IP, it generates fallback data."""
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
     
@@ -477,7 +478,8 @@ def main():
         if gemini_api_key:
             try:
                 genai.configure(api_key=gemini_api_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # USING GEMINI-PRO TO PREVENT 404 ERRORS
+                model = genai.GenerativeModel('gemini-pro')
 
                 if "messages" not in st.session_state:
                     st.session_state.messages = []
