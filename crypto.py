@@ -27,49 +27,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 SIDEBAR & SECRETS
-# ==========================================
-with st.sidebar:
-    st.header("🔑 AI Integration")
-    # Securely fetch the API key from secrets.toml (Fallback to text input if missing)
-    gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
-    if not gemini_api_key:
-        gemini_api_key = st.text_input("Enter Gemini API Key", type="password")
-        
-    if gemini_api_key:
-        st.success("✅ AI Assistant Active!")
-    else:
-        st.error("⚠️ API Key missing.")
-
-    st.header("⚙️ Settings Panel")
-    crypto_options = ["BTC-USD", "ETH-USD", "SOL-USD"]
-    symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=0)
-    
-    date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today().date()])
-    if len(date_range) != 2:
-        st.warning("Please select both a start and end date.")
-        st.stop()
-        
-    vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20)
-    
-    st.markdown("---")
-    st.subheader("📐 Math Simulation")
-    sim_toggle = st.checkbox("Enable Simulation Mode")
-    sim_mode = st.selectbox("Pattern", ["Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)", "Combined mode"])
-    amp = st.slider("Amplitude", 1000, 20000, 5000)
-    freq = st.slider("Frequency", 0.5, 20.0, 5.0)
-    drift = st.slider("Drift slope", -100.0, 100.0, 10.0)
-    noise = st.slider("Noise intensity", 500, 10000, 2000)
-
-# ==========================================
-# 🔹 STAGE 4: BULLETPROOF DATA PREPARATION 
+# 🔹 HELPER FUNCTIONS (CACHED)
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
     """Fetches real Bitcoin dataset using yf.Ticker (Bypasses Multi-Index bugs)."""
-    # Add 1 day to end_date to ensure inclusive fetching
     end_date_inclusive = end_date + timedelta(days=1)
-    
     ticker = yf.Ticker(symbol)
     df = ticker.history(start=start_date, end=end_date_inclusive)
     
@@ -77,24 +40,17 @@ def load_data(symbol, start_date, end_date):
         return pd.DataFrame()
         
     df.reset_index(inplace=True)
-    
-    # Remove timezones so Plotly and Streamlit don't crash
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-        
     return df
 
 def clean_data(df):
     """Cleans and formats data safely."""
     if df.empty:
         return df
-        
-    # Standardize column naming just in case yfinance changes cases
     df.columns = [str(c).capitalize() for c in df.columns]
-    
     if "Close" in df.columns:
         df.rename(columns={"Close": "Price"}, inplace=True)
-    
     df.ffill(inplace=True)
     if "Price" in df.columns:
         df.dropna(subset=["Price"], inplace=True) 
@@ -127,9 +83,6 @@ def calculate_indicators(df, window=20):
     
     return df.dropna()
 
-# ==========================================
-# 🔹 MATHEMATICAL SIMULATION
-# ==========================================
 def simulate_patterns(df, mode, amp, freq, drift, noise_int):
     """Generates mathematical price simulations."""
     t = np.arange(len(df))
@@ -145,17 +98,12 @@ def simulate_patterns(df, mode, amp, freq, drift, noise_int):
         sim = base + drift * t 
     else: 
         sim = base + drift * t + amp * np.sin(2 * np.pi * freq * (t / len(t))) + np.random.normal(0, noise_int, len(t))
-        
     return sim
 
-# ==========================================
-# 🔹 3D MASCOT SYSTEM & AI ANALYSIS
-# ==========================================
 def render_3d_mascot(volatility_state):
     """Renders a 3D Three.js rotating object."""
     colors = {"Low": "#00ff00", "Medium": "#ffff00", "High": "#ff0000"}
     hex_color = colors.get(volatility_state, "#00ff00")
-    
     html_code = f"""
     <div id="mascot-container" style="width: 100%; height: 220px; display: flex; justify-content: center; align-items: center; position: relative;">
         <div style="position: absolute; top: 10px; background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 15px; color: white; font-family: sans-serif; font-size: 12px;">
@@ -169,19 +117,16 @@ def render_3d_mascot(volatility_state):
         const renderer = new THREE.WebGLRenderer({{alpha: true, antialias: true}});
         renderer.setSize(220, 220);
         document.getElementById('mascot-container').appendChild(renderer.domElement);
-        
         const geometry = new THREE.OctahedronGeometry(1.5, 0);
         const material = new THREE.MeshStandardMaterial({{ 
             color: "{hex_color}", wireframe: true, emissive: "{hex_color}", emissiveIntensity: 0.6 
         }});
         const gem = new THREE.Mesh(geometry, material);
         scene.add(gem);
-        
         const light = new THREE.PointLight(0xffffff, 1, 100);
         light.position.set(10, 10, 10);
         scene.add(light);
         camera.position.z = 3.5;
-        
         function animate() {{
             requestAnimationFrame(animate);
             gem.rotation.x += 0.01;
@@ -195,7 +140,6 @@ def render_3d_mascot(volatility_state):
 
 def ai_analysis(df):
     latest_vol = float(df["Rolling_Volatility"].iloc[-1])
-    
     if latest_vol < 0.4:
         state, color = "Low", "green"
         explanation = "The current volatility is Low. Prices are relatively stable. Sharpe ratio indicates steady risk-adjusted returns."
@@ -211,68 +155,18 @@ def ai_analysis(df):
     st.caption("*Educational Suggestion: High volatility increases both potential reward and risk (standard deviation).*")
     return state
 
-# ==========================================
-# 🔹 ADVANCED FEATURES
-# ==========================================
-def monte_carlo_simulation(df):
-    returns = df["Daily_Return"].dropna()
-    mean_return, std_return = returns.mean(), returns.std()
-    last_price = float(df["Price"].iloc[-1])
-    
-    simulations = []
-    for _ in range(100): 
-        path = [last_price]
-        for _ in range(30): 
-            path.append(path[-1] * (1 + np.random.normal(mean_return, std_return)))
-        simulations.append(path)
-        
-    fig = go.Figure()
-    for sim in simulations:
-        fig.add_trace(go.Scatter(y=sim, mode='lines', line=dict(width=1, color='rgba(0, 255, 204, 0.05)')))
-    fig.update_layout(title="🔮 Monte Carlo Simulation (100 Paths, 30 Days)", showlegend=False, template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
-
-def neural_network_prediction(df):
-    st.write("Training Simple Neural Network (LSTM Alternative)...")
-    data = df[["Price"]].values
-    scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(data)
-    
-    X, y = [], []
-    for i in range(14, len(scaled_data)):
-        X.append(scaled_data[i-14:i, 0])
-        y.append(scaled_data[i, 0])
-    X, y = np.array(X), np.array(y)
-    
-    model = MLPRegressor(hidden_layer_sizes=(50, 50), max_iter=300, random_state=42)
-    model.fit(X, y)
-    
-    last_14 = scaled_data[-14:].reshape(1, -1)
-    predictions = []
-    for _ in range(7):
-        next_pred = model.predict(last_14)[0]
-        predictions.append(next_pred)
-        last_14 = np.append(last_14[:, 1:], next_pred).reshape(1, -1)
-        
-    pred_prices = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
-    
-    future_dates = [df["Date"].iloc[-1] + timedelta(days=i) for i in range(1, 8)]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["Date"].iloc[-30:], y=df["Price"].iloc[-30:].values.flatten(), name="Recent Actual Price"))
-    fig.add_trace(go.Scatter(x=future_dates, y=pred_prices.flatten(), name="7-Day NN Forecast", line=dict(dash='dot', color='red')))
-    fig.update_layout(title="🤖 Neural Network 7-Day Forecast", template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
-
-def generate_pdf_report(df, vol_state):
+def generate_pdf_report(df, vol_state, symbol):
+    latest_price = float(df["Price"].iloc[-1])
+    latest_vol = float(df["Rolling_Volatility"].iloc[-1])
     report_content = f"""
-    BITCOIN VOLATILITY REPORT - ELITE EDITION
+    CRYPTO VOLATILITY REPORT: {symbol}
     =========================================
     Date Generated: {datetime.today().strftime('%Y-%m-%d')}
     Dataset Shape: {df.shape}
     
     KEY METRICS:
-    - Final Price: ${float(df["Price"].iloc[-1]):,.2f}
-    - Annualized Volatility: {float(df["Rolling_Volatility"].iloc[-1])*100:.2f}%
+    - Final Price: ${latest_price:,.2f}
+    - Annualized Volatility: {latest_vol*100:.2f}%
     - Max Drawdown: {float(df["Drawdown"].min())*100:.2f}%
     
     AI CLASSIFICATION:
@@ -281,90 +175,20 @@ def generate_pdf_report(df, vol_state):
     Disclaimer: Generated for BTEC CRS AI-II. Not financial advice.
     """
     b64 = base64.b64encode(report_content.encode()).decode()
-    href = f'<a href="data:file/txt;base64,{b64}" download="BTC_Volatility_Report.txt" class="metric-card" style="color:#00ffcc; text-decoration:none;">📄 Download Auto-Generated Report (.txt)</a>'
+    href = f'<a href="data:file/txt;base64,{b64}" download="{symbol}_Volatility_Report.txt" class="metric-card" style="color:#00ffcc; text-decoration:none;">📄 Download Auto-Generated Report (.txt)</a>'
     st.markdown(href, unsafe_allow_html=True)
 
-def portfolio_optimizer():
-    st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
-    try:
-        # Using tickers here too for stability
-        data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], period="6mo", progress=False)
-        if isinstance(data.columns, pd.MultiIndex):
-            returns = data['Close'].pct_change().dropna()
-        else:
-            returns = data.pct_change().dropna()
-            
-        corr = returns.corr()
-        fig = px.imshow(corr, text_auto=True, title="💼 Multi-Crypto Correlation Matrix", color_continuous_scale="Viridis")
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not load multi-crypto data. Error: {str(e)}")
-
-def build_visualizations(df):
-    """Renders the 10 required Plotly charts."""
-    # 1. Price vs Date
-    fig1 = px.line(df, x="Date", y="Price", title="1️⃣ Bitcoin Price vs Date")
-    st.plotly_chart(fig1, use_container_width=True)
-    
-    # 2. High vs Low
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=df["Date"], y=df["High"].values.flatten(), name="High", line=dict(color='green')))
-    fig2.add_trace(go.Scatter(x=df["Date"], y=df["Low"].values.flatten(), name="Low", line=dict(color='red')))
-    fig2.update_layout(title="2️⃣ High vs Low Comparison")
-    st.plotly_chart(fig2, use_container_width=True)
-    
-    # 3. Volume
-    fig3 = px.bar(df, x="Date", y="Volume", title="3️⃣ Trading Volume")
-    st.plotly_chart(fig3, use_container_width=True)
-
-    # 4. Histogram of Returns
-    fig4 = px.histogram(df, x="Daily_Return", nbins=60, title="4️⃣ Histogram of Daily Returns")
-    st.plotly_chart(fig4, use_container_width=True)
-    
-    # 5. Rolling Volatility
-    fig5 = px.line(df, x="Date", y="Rolling_Volatility", title="5️⃣ Rolling Volatility (Annualized)")
-    st.plotly_chart(fig5, use_container_width=True)
-    
-    # 6. Stable vs Volatile (Color Coded Scatter)
-    df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
-    fig6 = px.scatter(df, x="Date", y="Price", color="Vol_Color", title="6️⃣ Stable vs Volatile Market Regions")
-    st.plotly_chart(fig6, use_container_width=True)
-
-    # 7. Bollinger Bands
-    fig7 = go.Figure()
-    fig7.add_trace(go.Scatter(x=df["Date"], y=df["Price"].values.flatten(), name="Price"))
-    fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"].values.flatten(), name="Upper Band", line=dict(dash='dot')))
-    fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Lower"].values.flatten(), name="Lower Band", line=dict(dash='dot')))
-    fig7.update_layout(title="7️⃣ Bollinger Bands")
-    st.plotly_chart(fig7, use_container_width=True)
-    
-    # 8. RSI
-    fig8 = px.line(df, x="Date", y="RSI", title="8️⃣ 14-Day RSI")
-    fig8.add_hline(y=70, line_dash="dash", line_color="red")
-    fig8.add_hline(y=30, line_dash="dash", line_color="green")
-    st.plotly_chart(fig8, use_container_width=True)
-    
-    # 9. MACD
-    fig9 = go.Figure()
-    fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD"].values.flatten(), name="MACD"))
-    fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD_Signal"].values.flatten(), name="Signal"))
-    fig9.update_layout(title="9️⃣ MACD Indicator")
-    st.plotly_chart(fig9, use_container_width=True)
-    
-    # 10. Drawdown
-    fig10 = px.area(df, x="Date", y="Drawdown", title="🔟 Drawdown Chart")
-    st.plotly_chart(fig10, use_container_width=True)
-
-
 # ==========================================
-# 🔹 MAIN DASHBOARD
+# 🔹 MAIN DASHBOARD (ALL UI GOES HERE)
 # ==========================================
 def main():
     st.title("⚡ Crypto Volatility Visualizer – Elite Public Edition")
     
+    # --- STATE MANAGEMENT ---
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD"
     
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("🔑 AI Assistant API")
         gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -390,28 +214,29 @@ def main():
         except ValueError:
             default_index = 0
             
-        symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=default_index)
+        # Selectbox (Only called once now!)
+        symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=default_index, key="crypto_selector_widget")
         if symbol != st.session_state.selected_crypto:
             st.session_state.selected_crypto = symbol
             st.rerun() 
             
-        date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today().date()])
+        date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today().date()], key="date_range_widget")
         if len(date_range) != 2:
             st.warning("Please select an end date.")
             st.stop()
             
-        vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20)
+        vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20, key="vol_window_widget")
         
         st.markdown("---")
         st.subheader("📐 Math Simulation")
-        sim_toggle = st.checkbox("Enable Simulation Mode")
-        sim_mode = st.selectbox("Pattern", ["Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)", "Combined mode"])
-        amp = st.slider("Amplitude", 1000, 20000, 5000)
-        freq = st.slider("Frequency", 0.5, 20.0, 5.0)
-        drift = st.slider("Drift slope", -100.0, 100.0, 10.0)
-        noise = st.slider("Noise intensity", 500, 10000, 2000)
+        sim_toggle = st.checkbox("Enable Simulation Mode", key="sim_toggle_widget")
+        sim_mode = st.selectbox("Pattern", ["Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)", "Combined mode"], key="sim_mode_widget")
+        amp = st.slider("Amplitude", 1000, 20000, 5000, key="amp_widget")
+        freq = st.slider("Frequency", 0.5, 20.0, 5.0, key="freq_widget")
+        drift = st.slider("Drift slope", -100.0, 100.0, 10.0, key="drift_widget")
+        noise = st.slider("Noise intensity", 500, 10000, 2000, key="noise_widget")
 
-    # 🔹 LOAD DATA
+    # --- DATA PIPELINE ---
     raw_df = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
     
     if raw_df.empty:
@@ -428,6 +253,7 @@ def main():
         st.error("⚠️ Not enough data points to calculate indicators. Select a wider date range.")
         st.stop()
 
+    # --- METRICS & AI UI ---
     with st.expander("📊 View Dataset Details (Stage 4 Requirements)"):
         st.write(f"**Dataset Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
         st.dataframe(df.head())
@@ -450,22 +276,62 @@ def main():
     with col_ai2:
         vol_state = ai_analysis(df)
         st.progress(min(int(latest_vol), 100), text=f"Risk Meter: {latest_vol:.1f}%")
-        generate_pdf_report(df, vol_state)
+        generate_pdf_report(df, vol_state, symbol)
     with col_ai1:
-        render_3d_mascot(vol_state)
+        if latest_vol < 40:
+            mascot_color = "Low"
+        elif latest_vol < 70:
+            mascot_color = "Medium"
+        else:
+            mascot_color = "High"
+        render_3d_mascot(mascot_color)
 
     st.markdown("---")
 
+    # --- TABS ---
     t1, t2, t3, t4 = st.tabs(["📊 Core Visualizations", "📐 Simulation Mode", "🧠 AI Quant Tools", "🤖 Gemini Chat"])
     
     with t1:
-        build_visualizations(df)
+        st.plotly_chart(px.line(df, x="Date", y="Price", title="1️⃣ Price vs Date"), use_container_width=True)
+        
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=df["Date"], y=df["High"], name="High", line=dict(color='green')))
+        fig2.add_trace(go.Scatter(x=df["Date"], y=df["Low"], name="Low", line=dict(color='red')))
+        fig2.update_layout(title="2️⃣ High vs Low Comparison")
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        st.plotly_chart(px.bar(df, x="Date", y="Volume", title="3️⃣ Trading Volume"), use_container_width=True)
+        st.plotly_chart(px.histogram(df, x="Daily_Return", nbins=60, title="4️⃣ Histogram of Daily Returns"), use_container_width=True)
+        st.plotly_chart(px.line(df, x="Date", y="Rolling_Volatility", title="5️⃣ Rolling Volatility (Annualized)"), use_container_width=True)
+        
+        df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
+        st.plotly_chart(px.scatter(df, x="Date", y="Price", color="Vol_Color", title="6️⃣ Stable vs Volatile Market Regions"), use_container_width=True)
+
+        fig7 = go.Figure()
+        fig7.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Price"))
+        fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"], name="Upper Band", line=dict(dash='dot')))
+        fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Lower"], name="Lower Band", line=dict(dash='dot')))
+        fig7.update_layout(title="7️⃣ Bollinger Bands")
+        st.plotly_chart(fig7, use_container_width=True)
+        
+        fig8 = px.line(df, x="Date", y="RSI", title="8️⃣ 14-Day RSI")
+        fig8.add_hline(y=70, line_dash="dash", line_color="red")
+        fig8.add_hline(y=30, line_dash="dash", line_color="green")
+        st.plotly_chart(fig8, use_container_width=True)
+        
+        fig9 = go.Figure()
+        fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD"], name="MACD"))
+        fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD_Signal"], name="Signal"))
+        fig9.update_layout(title="9️⃣ MACD Indicator")
+        st.plotly_chart(fig9, use_container_width=True)
+        
+        st.plotly_chart(px.area(df, x="Date", y="Drawdown", title="🔟 Drawdown Chart"), use_container_width=True)
         
     with t2:
         if sim_toggle:
             df["Simulated"] = simulate_patterns(df, sim_mode, amp, freq, drift, noise)
             fig_sim = go.Figure()
-            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Price"].values.flatten(), name="Real Price"))
+            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Real Price"))
             fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Simulated"], name=f"Simulated ({sim_mode})"))
             fig_sim.update_layout(title="Real vs Mathematical Simulated Price", template="plotly_dark")
             st.plotly_chart(fig_sim, use_container_width=True)
@@ -473,21 +339,69 @@ def main():
             st.info("👈 Enable Simulation Mode in the sidebar to view mathematical models.")
             
     with t3:
-        if st.button("Run Monte Carlo Simulation"):
-            monte_carlo_simulation(df)
-        if st.button("Run Neural Network Forecast"):
-            neural_network_prediction(df)
-        if st.button("Run Multi-Crypto Optimizer"):
-            portfolio_optimizer()
+        if st.button("Run Monte Carlo Simulation", key="btn_mc"):
+            returns = df["Daily_Return"].dropna()
+            mean_return, std_return = returns.mean(), returns.std()
+            last_price = float(df["Price"].iloc[-1])
+            simulations = []
+            for _ in range(100): 
+                path = [last_price]
+                for _ in range(30): 
+                    path.append(path[-1] * (1 + np.random.normal(mean_return, std_return)))
+                simulations.append(path)
+            fig_mc = go.Figure()
+            for sim in simulations:
+                fig_mc.add_trace(go.Scatter(y=sim, mode='lines', line=dict(width=1, color='rgba(0, 255, 204, 0.05)')))
+            fig_mc.update_layout(title="🔮 Monte Carlo Simulation (100 Paths, 30 Days)", showlegend=False, template="plotly_dark")
+            st.plotly_chart(fig_mc, use_container_width=True)
+            
+        if st.button("Run Neural Network Forecast", key="btn_nn"):
+            st.write("Training Simple Neural Network (LSTM Alternative)...")
+            data = df[["Price"]].values
+            scaler = MinMaxScaler()
+            scaled_data = scaler.fit_transform(data)
+            X, y = [], []
+            for i in range(14, len(scaled_data)):
+                X.append(scaled_data[i-14:i, 0])
+                y.append(scaled_data[i, 0])
+            X, y = np.array(X), np.array(y)
+            model = MLPRegressor(hidden_layer_sizes=(50, 50), max_iter=300, random_state=42)
+            model.fit(X, y)
+            last_14 = scaled_data[-14:].reshape(1, -1)
+            predictions = []
+            for _ in range(7):
+                next_pred = model.predict(last_14)[0]
+                predictions.append(next_pred)
+                last_14 = np.append(last_14[:, 1:], next_pred).reshape(1, -1)
+            pred_prices = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
+            future_dates = [df["Date"].iloc[-1] + timedelta(days=i) for i in range(1, 8)]
+            fig_nn = go.Figure()
+            fig_nn.add_trace(go.Scatter(x=df["Date"].iloc[-30:], y=df["Price"].iloc[-30:], name="Recent Actual Price"))
+            fig_nn.add_trace(go.Scatter(x=future_dates, y=pred_prices.flatten(), name="7-Day NN Forecast", line=dict(dash='dot', color='red')))
+            fig_nn.update_layout(title="🤖 Neural Network 7-Day Forecast", template="plotly_dark")
+            st.plotly_chart(fig_nn, use_container_width=True)
+            
+        if st.button("Run Multi-Crypto Optimizer", key="btn_opt"):
+            st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
+            try:
+                data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], period="6mo", progress=False)
+                if isinstance(data.columns, pd.MultiIndex):
+                    returns = data['Close'].pct_change().dropna()
+                else:
+                    returns = data.pct_change().dropna()
+                corr = returns.corr()
+                fig_corr = px.imshow(corr, text_auto=True, title="💼 Multi-Crypto Correlation Matrix", color_continuous_scale="Viridis")
+                st.plotly_chart(fig_corr, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not load multi-crypto data. Error: {str(e)}")
             
         st.markdown("---")
         st.subheader("⏯ Animated Price Replay")
-        animated_df = df.iloc[-60:].copy()
-        min_date, max_date = animated_df["Date"].min(), animated_df["Date"].max()
-        min_price, max_price = animated_df["Price"].min()*0.95, animated_df["Price"].max()*1.05
-        chart_placeholder = st.empty()
-        
-        if st.button("▶️ Start Live Replay"):
+        if st.button("▶️ Start Live Replay", key="btn_replay"):
+            animated_df = df.iloc[-60:].copy()
+            min_date, max_date = animated_df["Date"].min(), animated_df["Date"].max()
+            min_price, max_price = animated_df["Price"].min()*0.95, animated_df["Price"].max()*1.05
+            chart_placeholder = st.empty()
             progress_bar = st.progress(0)
             for i in range(1, len(animated_df) + 1):
                 current_data = animated_df.iloc[:i]
@@ -497,10 +411,6 @@ def main():
                 progress_bar.progress(i / len(animated_df))
                 time.sleep(0.05)
             st.success("Replay Complete!")
-        else:
-            fig_anim = px.line(animated_df, x="Date", y="Price", range_x=[min_date, max_date], range_y=[min_price, max_price])
-            fig_anim.update_layout(template="plotly_dark", title="Ready for Replay (Click Start)")
-            chart_placeholder.plotly_chart(fig_anim, use_container_width=True)
 
     with t4:
         st.subheader("🧠 Senior AI Quant Assistant")
@@ -523,7 +433,6 @@ def main():
                         st.markdown(prompt)
                     st.session_state.messages.append({"role": "user", "content": prompt})
 
-                    # Secretly inject live dashboard data into the prompt
                     context = f"""
                     You are a Senior Quantitative Analyst AI. Answer concisely.
                     CURRENT MARKET CONTEXT:
