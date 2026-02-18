@@ -29,7 +29,7 @@ st.markdown("""
 with st.sidebar:
     st.header("🔑 AI Integration")
     # Securely fetch the API key from secrets.toml (Fallback to text input if missing)
-    gemini_api_key = "AIzaSyCakLpCyBipE7p-amnYzBEWeT5KKcTbgmo"
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not gemini_api_key:
         gemini_api_key = st.text_input("Enter Gemini API Key", type="password")
         
