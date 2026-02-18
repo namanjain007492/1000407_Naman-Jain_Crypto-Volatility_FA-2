@@ -1,6 +1,6 @@
 streamlit==1.26.0
-pandas==2.1.0
-numpy==1.25.2
-yfinance==0.2.27
-altair==5.0.1
+pandas==1.5.3
+numpy
+yfinance
+altair
 openai==1.27.7
