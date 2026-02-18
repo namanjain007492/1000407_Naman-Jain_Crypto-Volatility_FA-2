@@ -11,13 +11,10 @@ import streamlit.components.v1 as components
 import base64
 import time
 
-# Import the microphone recorder for real voice control
-from streamlit_mic_recorder import speech_to_text
-
 # ==========================================
 # PAGE CONFIGURATION & UI DESIGN
 # ==========================================
-st.set_page_config(page_title="Crypto Volatility Visualizer", page_icon="₿", layout="wide")
+st.set_page_config(page_title="Bitcoin Volatility Visualizer", page_icon="₿", layout="wide")
 
 # Modern, clean, slightly oversized aesthetic for FinTech UI
 st.markdown("""
@@ -329,13 +326,14 @@ def build_visualizations(df):
     fig10 = px.area(df, x="Date", y="Drawdown", title="🔟 Drawdown Chart")
     st.plotly_chart(fig10, use_container_width=True)
 
+
 # ==========================================
 # 🔹 MAIN DASHBOARD
 # ==========================================
 def main():
     st.title("⚡ Crypto Volatility Visualizer – Elite Public Edition")
     
-    # --- STATE MANAGEMENT FOR VOICE CONTROL ---
+    # --- STATE MANAGEMENT ---
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD"
     
@@ -343,26 +341,14 @@ def main():
     with st.sidebar:
         st.header("⚙️ Settings Panel")
         
-        # --- 🎤 WORKING VOICE CONTROL ---
+        # --- SIMULATED VOICE CONTROL ---
         st.markdown("**🎤 Voice Control**")
-        st.caption("Click the mic and say 'Ethereum', 'Bitcoin', or 'Solana'")
-        
-        spoken_text = speech_to_text(language='en', use_container_width=True, just_once=True, key='STT')
-        
-        if spoken_text:
-            text_lower = spoken_text.lower()
-            if "ethereum" in text_lower or "eth" in text_lower:
-                st.session_state.selected_crypto = "ETH-USD"
-                st.toast("🎤 Voice recognized: Switched to Ethereum!")
-            elif "solana" in text_lower or "sol" in text_lower:
-                st.session_state.selected_crypto = "SOL-USD"
-                st.toast("🎤 Voice recognized: Switched to Solana!")
-            elif "bitcoin" in text_lower or "btc" in text_lower:
-                st.session_state.selected_crypto = "BTC-USD"
-                st.toast("🎤 Voice recognized: Switched to Bitcoin!")
-            else:
-                st.toast(f"🎤 Heard '{spoken_text}', but didn't recognize a crypto.")
-
+        st.caption("Simulator Mode (No Mic Required)")
+        if st.button("🎙️ Simulate Voice: 'Switch to ETH'"):
+            st.session_state.selected_crypto = "ETH-USD"
+            st.toast("✅ Voice Command Recognized: Switching to Ethereum...")
+            st.rerun()
+            
         # Dropdown linked to Session State
         crypto_options = ["BTC-USD", "ETH-USD", "SOL-USD"]
         try:
@@ -372,10 +358,10 @@ def main():
             
         symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=default_index)
         
+        # Update session state if user manually changes the dropdown
         if symbol != st.session_state.selected_crypto:
             st.session_state.selected_crypto = symbol
-            st.rerun() # Force UI refresh if changed manually
-        # ----------------------------------------
+            st.rerun() 
             
         date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today()])
         vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20)
