@@ -453,7 +453,7 @@ What is drift in financial modeling?
 
 Streamlit Link :
 
-https://1000407naman-jaincrypto-volatilityfa-2-2jpegf34rfmmo3vhvvudaw.streamlit.app/
+ https://1000407naman-jaincrypto-volatilityfa-2-ptb66wbdbnvjyh6x2vacus.streamlit.app/
 
 Drive Link:
 
