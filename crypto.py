@@ -15,7 +15,7 @@ import google.generativeai as genai
 # ==========================================
 # PAGE CONFIGURATION & UI DESIGN
 # ==========================================
-st.set_page_config(page_title="Bitcoin Volatility Visualizer", page_icon="₿", layout="wide")
+st.set_page_config(page_title="Crypto Volatility Visualizer", page_icon="₿", layout="wide")
 
 # Modern, clean, slightly oversized aesthetic for FinTech UI
 st.markdown("""
@@ -27,22 +27,61 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 STAGE 4: BULLETPROOF DATA PREPARATION
+# 🔹 SIDEBAR & SECRETS
+# ==========================================
+with st.sidebar:
+    st.header("🔑 AI Integration")
+    # Securely fetch the API key from secrets.toml (Fallback to text input if missing)
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not gemini_api_key:
+        gemini_api_key = st.text_input("Enter Gemini API Key", type="password")
+        
+    if gemini_api_key:
+        st.success("✅ AI Assistant Active!")
+    else:
+        st.error("⚠️ API Key missing.")
+
+    st.header("⚙️ Settings Panel")
+    crypto_options = ["BTC-USD", "ETH-USD", "SOL-USD"]
+    symbol = st.selectbox("Multi-Crypto Selector", crypto_options, index=0)
+    
+    date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today().date()])
+    if len(date_range) != 2:
+        st.warning("Please select both a start and end date.")
+        st.stop()
+        
+    vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20)
+    
+    st.markdown("---")
+    st.subheader("📐 Math Simulation")
+    sim_toggle = st.checkbox("Enable Simulation Mode")
+    sim_mode = st.selectbox("Pattern", ["Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)", "Combined mode"])
+    amp = st.slider("Amplitude", 1000, 20000, 5000)
+    freq = st.slider("Frequency", 0.5, 20.0, 5.0)
+    drift = st.slider("Drift slope", -100.0, 100.0, 10.0)
+    noise = st.slider("Noise intensity", 500, 10000, 2000)
+
+# ==========================================
+# 🔹 STAGE 4: BULLETPROOF DATA PREPARATION 
 # ==========================================
 @st.cache_data(ttl=3600)
-def load_data(symbol="BTC-USD", start_date="2023-01-01", end_date=datetime.today().strftime('%Y-%m-%d')):
-    """Fetches real Bitcoin dataset using yfinance."""
-    df = yf.download(symbol, start=start_date, end=end_date, progress=False)
+def load_data(symbol, start_date, end_date):
+    """Fetches real Bitcoin dataset using yf.Ticker (Bypasses Multi-Index bugs)."""
+    # Add 1 day to end_date to ensure inclusive fetching
+    end_date_inclusive = end_date + timedelta(days=1)
     
-    # Catch empty dataframes from Yahoo Finance
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(start=start_date, end=end_date_inclusive)
+    
     if df.empty:
         return pd.DataFrame()
         
-    # Handle yfinance multi-index columns safely
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
-        
     df.reset_index(inplace=True)
+    
+    # Remove timezones so Plotly and Streamlit don't crash
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+        
     return df
 
 def clean_data(df):
@@ -50,7 +89,8 @@ def clean_data(df):
     if df.empty:
         return df
         
-    df["Date"] = pd.to_datetime(df["Date"])
+    # Standardize column naming just in case yfinance changes cases
+    df.columns = [str(c).capitalize() for c in df.columns]
     
     if "Close" in df.columns:
         df.rename(columns={"Close": "Price"}, inplace=True)
@@ -247,6 +287,7 @@ def generate_pdf_report(df, vol_state):
 def portfolio_optimizer():
     st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
     try:
+        # Using tickers here too for stability
         data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], period="6mo", progress=False)
         if isinstance(data.columns, pd.MultiIndex):
             returns = data['Close'].pct_change().dropna()
@@ -260,28 +301,36 @@ def portfolio_optimizer():
         st.error(f"Could not load multi-crypto data. Error: {str(e)}")
 
 def build_visualizations(df):
+    """Renders the 10 required Plotly charts."""
+    # 1. Price vs Date
     fig1 = px.line(df, x="Date", y="Price", title="1️⃣ Bitcoin Price vs Date")
     st.plotly_chart(fig1, use_container_width=True)
     
+    # 2. High vs Low
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=df["Date"], y=df["High"].values.flatten(), name="High", line=dict(color='rgba(0,255,0,0.6)')))
-    fig2.add_trace(go.Scatter(x=df["Date"], y=df["Low"].values.flatten(), name="Low", line=dict(color='rgba(255,0,0,0.6)')))
+    fig2.add_trace(go.Scatter(x=df["Date"], y=df["High"].values.flatten(), name="High", line=dict(color='green')))
+    fig2.add_trace(go.Scatter(x=df["Date"], y=df["Low"].values.flatten(), name="Low", line=dict(color='red')))
     fig2.update_layout(title="2️⃣ High vs Low Comparison")
     st.plotly_chart(fig2, use_container_width=True)
     
+    # 3. Volume
     fig3 = px.bar(df, x="Date", y="Volume", title="3️⃣ Trading Volume")
     st.plotly_chart(fig3, use_container_width=True)
 
+    # 4. Histogram of Returns
     fig4 = px.histogram(df, x="Daily_Return", nbins=60, title="4️⃣ Histogram of Daily Returns")
     st.plotly_chart(fig4, use_container_width=True)
     
+    # 5. Rolling Volatility
     fig5 = px.line(df, x="Date", y="Rolling_Volatility", title="5️⃣ Rolling Volatility (Annualized)")
     st.plotly_chart(fig5, use_container_width=True)
     
+    # 6. Stable vs Volatile (Color Coded Scatter)
     df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
     fig6 = px.scatter(df, x="Date", y="Price", color="Vol_Color", title="6️⃣ Stable vs Volatile Market Regions")
     st.plotly_chart(fig6, use_container_width=True)
 
+    # 7. Bollinger Bands
     fig7 = go.Figure()
     fig7.add_trace(go.Scatter(x=df["Date"], y=df["Price"].values.flatten(), name="Price"))
     fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"].values.flatten(), name="Upper Band", line=dict(dash='dot')))
@@ -289,17 +338,20 @@ def build_visualizations(df):
     fig7.update_layout(title="7️⃣ Bollinger Bands")
     st.plotly_chart(fig7, use_container_width=True)
     
+    # 8. RSI
     fig8 = px.line(df, x="Date", y="RSI", title="8️⃣ 14-Day RSI")
     fig8.add_hline(y=70, line_dash="dash", line_color="red")
     fig8.add_hline(y=30, line_dash="dash", line_color="green")
     st.plotly_chart(fig8, use_container_width=True)
     
+    # 9. MACD
     fig9 = go.Figure()
     fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD"].values.flatten(), name="MACD"))
     fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD_Signal"].values.flatten(), name="Signal"))
     fig9.update_layout(title="9️⃣ MACD Indicator")
     st.plotly_chart(fig9, use_container_width=True)
     
+    # 10. Drawdown
     fig10 = px.area(df, x="Date", y="Drawdown", title="🔟 Drawdown Chart")
     st.plotly_chart(fig10, use_container_width=True)
 
@@ -361,7 +413,8 @@ def main():
 
     # 🔹 LOAD DATA
     raw_df = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
-    if raw_df.empty or "Close" not in raw_df.columns:
+    
+    if raw_df.empty:
         st.error("⚠️ No price data found for selected dates. Try a wider range.")
         st.stop()
         
