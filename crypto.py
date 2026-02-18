@@ -30,24 +30,23 @@ st.markdown("""
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
-    """Fetches real data. If Yahoo API blocks the Cloud IP, it generates fallback data."""
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
     
     try:
-        # Attempt 1: Fetch Real Data
-        df = yf.download(symbol, start=start_str, end=end_str, progress=False)
+        # Fetch Real Data (auto_adjust=False ensures exact historical raw prices)
+        df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False, progress=False)
         if not df.empty:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = [c[0] for c in df.columns]
             df.reset_index(inplace=True)
             if "Date" in df.columns:
                 df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-            return df, False  # False means "Real Data"
+            return df, False  
     except Exception:
         pass
 
-    # Attempt 2: THE FALLBACK (If Yahoo blocks the IP, generate realistic market data)
+    # THE FALLBACK
     days = (end_date - start_date).days
     if days < 30: days = 365
     
@@ -67,7 +66,7 @@ def load_data(symbol, start_date, end_date):
         "Close": prices,
         "Volume": np.random.uniform(10000, 500000, days)
     })
-    return df_fallback, True  # True means "Simulated Fallback Data"
+    return df_fallback, True  
 
 def clean_data(df):
     if df.empty: return df
@@ -175,7 +174,7 @@ def ai_analysis(df):
     st.caption("*Educational Suggestion: High volatility increases both potential reward and risk (standard deviation).*")
     return state
 
-def generate_pdf_report(df, vol_state, symbol):
+def generate_pdf_report(df, vol_state, symbol, currency_sym):
     latest_price = float(df["Price"].iloc[-1])
     latest_vol = float(df["Rolling_Volatility"].iloc[-1])
     report_content = f"""
@@ -185,7 +184,7 @@ def generate_pdf_report(df, vol_state, symbol):
     Dataset Shape: {df.shape}
     
     KEY METRICS:
-    - Final Price: ${latest_price:,.2f}
+    - Final Price: {currency_sym}{latest_price:,.2f}
     - Annualized Volatility: {latest_vol*100:.2f}%
     - Max Drawdown: {float(df["Drawdown"].min())*100:.2f}%
     
@@ -206,6 +205,8 @@ def main():
     
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD"
+    if "currency" not in st.session_state:
+        st.session_state.currency = "USD"
     
     with st.sidebar:
         st.header("🔑 AI Assistant API")
@@ -219,6 +220,17 @@ def main():
             st.error("⚠️ AI Key missing")
 
         st.header("⚙️ Settings Panel")
+        
+        # --- NEW FEATURE: CURRENCY TOGGLE ---
+        curr_options = ["USD", "EUR"]
+        selected_curr = st.radio("Display Currency", curr_options, index=curr_options.index(st.session_state.currency), horizontal=True)
+        if selected_curr != st.session_state.currency:
+            st.session_state.currency = selected_curr
+            st.rerun()
+            
+        currency_sym = "€" if st.session_state.currency == "EUR" else "$"
+        exchange_rate = 0.92 if st.session_state.currency == "EUR" else 1.0
+
         st.markdown("**🎤 Voice Control**")
         st.caption("Simulator Mode (No Mic Required)")
         if st.button("🎙️ Simulate Voice: 'Switch to ETH'"):
@@ -264,6 +276,13 @@ def main():
         st.warning("📡 **Network Alert:** Yahoo Finance API blocked the cloud connection. Loaded high-fidelity simulated market data to maintain functionality.")
         
     df = clean_data(raw_df)
+    
+    # Apply Exchange Rate to Price columns
+    price_cols = ["Price", "Open", "High", "Low"]
+    for col in price_cols:
+        if col in df.columns:
+            df[col] = df[col] * exchange_rate
+            
     df = calculate_indicators(df, window=vol_window)
     
     if df.empty:
@@ -283,7 +302,7 @@ def main():
     sharpe = float((df["Daily_Return"].mean() / df["Daily_Return"].std()) * np.sqrt(252))
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(f'<div class="metric-card"><div class="metric-label">Latest Price</div><div class="metric-value">${latest_price:,.2f}</div></div>', unsafe_allow_html=True)
+    c1.markdown(f'<div class="metric-card"><div class="metric-label">Latest Price</div><div class="metric-value">{currency_sym}{latest_price:,.2f}</div></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="metric-card"><div class="metric-label">Daily Return</div><div class="metric-value" style="color:{"#00ff00" if latest_ret>0 else "#ff0000"}">{latest_ret:.2f}%</div></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="metric-card"><div class="metric-label">Annualized Volatility</div><div class="metric-value">{latest_vol:.2f}%</div></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value">{sharpe:.2f}</div></div>', unsafe_allow_html=True)
@@ -294,7 +313,7 @@ def main():
     with col_ai2:
         vol_state = ai_analysis(df)
         st.progress(min(int(latest_vol), 100), text=f"Risk Meter: {latest_vol:.1f}%")
-        generate_pdf_report(df, vol_state, symbol)
+        generate_pdf_report(df, vol_state, symbol, currency_sym)
     with col_ai1:
         if latest_vol < 40:
             mascot_color = "Low"
@@ -310,29 +329,48 @@ def main():
     t1, t2, t3, t4 = st.tabs(["📊 Core Visualizations", "📐 Simulation Mode", "🧠 AI Quant Tools", "🤖 Gemini Chat"])
     
     with t1:
-        st.plotly_chart(px.line(df, x="Date", y="Price", title="1️⃣ Price vs Date"), use_container_width=True)
+        st.subheader("Advanced Price Charts")
+        chart_type = st.radio("Chart Type", ["Line Chart", "Candlestick (OHLC)"], horizontal=True)
+        
+        # --- NEW FEATURE: FIBONACCI RETRACEMENT ---
+        max_price = df["Price"].max()
+        min_price = df["Price"].min()
+        diff = max_price - min_price
+        fib_38 = max_price - 0.382 * diff
+        fib_61 = max_price - 0.618 * diff
+        
+        if chart_type == "Line Chart":
+            fig1 = px.line(df, x="Date", y="Price", title=f"Price vs Date ({currency_sym})")
+        else:
+            fig1 = go.Figure(data=[go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Price'])])
+            fig1.update_layout(title=f"Candlestick Chart ({currency_sym})", template="plotly_dark")
+        
+        # Add Fibonacci lines to main chart
+        fig1.add_hline(y=fib_38, line_dash="dash", line_color="rgba(255, 255, 0, 0.5)", annotation_text="Fib 38.2%")
+        fig1.add_hline(y=fib_61, line_dash="dash", line_color="rgba(0, 255, 255, 0.5)", annotation_text="Fib 61.8%")
+        st.plotly_chart(fig1, use_container_width=True)
         
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=df["Date"], y=df["High"], name="High", line=dict(color='green')))
         fig2.add_trace(go.Scatter(x=df["Date"], y=df["Low"], name="Low", line=dict(color='red')))
-        fig2.update_layout(title="2️⃣ High vs Low Comparison")
+        fig2.update_layout(title=f"High vs Low Comparison ({currency_sym})")
         st.plotly_chart(fig2, use_container_width=True)
         
-        st.plotly_chart(px.bar(df, x="Date", y="Volume", title="3️⃣ Trading Volume"), use_container_width=True)
-        st.plotly_chart(px.histogram(df, x="Daily_Return", nbins=60, title="4️⃣ Histogram of Daily Returns"), use_container_width=True)
-        st.plotly_chart(px.line(df, x="Date", y="Rolling_Volatility", title="5️⃣ Rolling Volatility (Annualized)"), use_container_width=True)
+        st.plotly_chart(px.bar(df, x="Date", y="Volume", title="Trading Volume"), use_container_width=True)
+        st.plotly_chart(px.histogram(df, x="Daily_Return", nbins=60, title="Histogram of Daily Returns"), use_container_width=True)
+        st.plotly_chart(px.line(df, x="Date", y="Rolling_Volatility", title="Rolling Volatility (Annualized)"), use_container_width=True)
         
         df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
-        st.plotly_chart(px.scatter(df, x="Date", y="Price", color="Vol_Color", title="6️⃣ Stable vs Volatile Market Regions"), use_container_width=True)
+        st.plotly_chart(px.scatter(df, x="Date", y="Price", color="Vol_Color", title="Stable vs Volatile Market Regions"), use_container_width=True)
 
         fig7 = go.Figure()
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Price"))
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"], name="Upper Band", line=dict(dash='dot')))
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Lower"], name="Lower Band", line=dict(dash='dot')))
-        fig7.update_layout(title="7️⃣ Bollinger Bands")
+        fig7.update_layout(title="Bollinger Bands")
         st.plotly_chart(fig7, use_container_width=True)
         
-        fig8 = px.line(df, x="Date", y="RSI", title="8️⃣ 14-Day RSI")
+        fig8 = px.line(df, x="Date", y="RSI", title="14-Day RSI")
         fig8.add_hline(y=70, line_dash="dash", line_color="red")
         fig8.add_hline(y=30, line_dash="dash", line_color="green")
         st.plotly_chart(fig8, use_container_width=True)
@@ -340,10 +378,10 @@ def main():
         fig9 = go.Figure()
         fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD"], name="MACD"))
         fig9.add_trace(go.Scatter(x=df["Date"], y=df["MACD_Signal"], name="Signal"))
-        fig9.update_layout(title="9️⃣ MACD Indicator")
+        fig9.update_layout(title="MACD Indicator")
         st.plotly_chart(fig9, use_container_width=True)
         
-        st.plotly_chart(px.area(df, x="Date", y="Drawdown", title="🔟 Drawdown Chart"), use_container_width=True)
+        st.plotly_chart(px.area(df, x="Date", y="Drawdown", title="Drawdown Chart"), use_container_width=True)
         
     with t2:
         if sim_toggle:
@@ -402,7 +440,6 @@ def main():
         if st.button("Run Multi-Crypto Optimizer", key="btn_opt"):
             st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
             try:
-                # Forcing string format here just in case yfinance gets stuck
                 d1 = date_range[0].strftime('%Y-%m-%d')
                 d2 = (date_range[1] + timedelta(days=1)).strftime('%Y-%m-%d')
                 data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], start=d1, end=d2, progress=False)
@@ -458,7 +495,7 @@ def main():
                     You are a Senior Quantitative Analyst AI. Answer concisely.
                     CURRENT MARKET CONTEXT:
                     - Asset: {st.session_state.selected_crypto}
-                    - Latest Price: ${latest_price:,.2f}
+                    - Latest Price: {currency_sym}{latest_price:,.2f}
                     - Daily Return: {latest_ret:.2f}%
                     - Annualized Volatility: {latest_vol:.2f}%
                     """
