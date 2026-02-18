@@ -30,12 +30,10 @@ st.markdown("""
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
-    """Fetches real data. If Yahoo API blocks the Cloud IP, it generates fallback data."""
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
     
     try:
-        # Fetch Real Data (auto_adjust=False ensures exact historical raw prices)
         df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False, progress=False)
         if not df.empty:
             if isinstance(df.columns, pd.MultiIndex):
@@ -47,7 +45,6 @@ def load_data(symbol, start_date, end_date):
     except Exception:
         pass
 
-    # THE FALLBACK
     days = (end_date - start_date).days
     if days < 30: days = 365
     
@@ -222,7 +219,6 @@ def main():
 
         st.header("⚙️ Settings Panel")
         
-        # --- NEW FEATURE: CURRENCY TOGGLE ---
         curr_options = ["USD", "EUR"]
         selected_curr = st.radio("Display Currency", curr_options, index=curr_options.index(st.session_state.currency), horizontal=True)
         if selected_curr != st.session_state.currency:
@@ -278,7 +274,6 @@ def main():
         
     df = clean_data(raw_df)
     
-    # Apply Exchange Rate to Price columns
     price_cols = ["Price", "Open", "High", "Low"]
     for col in price_cols:
         if col in df.columns:
@@ -333,7 +328,6 @@ def main():
         st.subheader("Advanced Price Charts")
         chart_type = st.radio("Chart Type", ["Line Chart", "Candlestick (OHLC)"], horizontal=True)
         
-        # --- NEW FEATURE: FIBONACCI RETRACEMENT ---
         max_price = df["Price"].max()
         min_price = df["Price"].min()
         diff = max_price - min_price
@@ -346,7 +340,6 @@ def main():
             fig1 = go.Figure(data=[go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Price'])])
             fig1.update_layout(title=f"Candlestick Chart ({currency_sym})", template="plotly_dark")
         
-        # Add Fibonacci lines to main chart
         fig1.add_hline(y=fib_38, line_dash="dash", line_color="rgba(255, 255, 0, 0.5)", annotation_text="Fib 38.2%")
         fig1.add_hline(y=fib_61, line_dash="dash", line_color="rgba(0, 255, 255, 0.5)", annotation_text="Fib 61.8%")
         st.plotly_chart(fig1, use_container_width=True)
@@ -478,40 +471,56 @@ def main():
         if gemini_api_key:
             try:
                 genai.configure(api_key=gemini_api_key)
-                # USING GEMINI-PRO TO PREVENT 404 ERRORS
-                model = genai.GenerativeModel('gemini-pro')
+                
+                # --- AUTO-DISCOVERY FIX ---
+                # This fetches exactly which models your API key is allowed to use.
+                # It guarantees we don't get a 404 error by blindly guessing the name.
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                
+                if not available_models:
+                    st.error("API Error: Your API key is valid but doesn't have text generation access.")
+                else:
+                    # Pick the best text model available on your specific key
+                    target_model = available_models[0]
+                    for m in available_models:
+                        if 'flash' in m or 'pro' in m:
+                            target_model = m
+                            break
+                            
+                    model = genai.GenerativeModel(target_model)
 
-                if "messages" not in st.session_state:
-                    st.session_state.messages = []
+                    if "messages" not in st.session_state:
+                        st.session_state.messages = []
 
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
+                    for message in st.session_state.messages:
+                        with st.chat_message(message["role"]):
+                            st.markdown(message["content"])
 
-                if prompt := st.chat_input("E.g., Based on the current volatility, is it a good time to buy?"):
-                    with st.chat_message("user"):
-                        st.markdown(prompt)
-                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    if prompt := st.chat_input("E.g., Based on the current volatility, is it a good time to buy?"):
+                        with st.chat_message("user"):
+                            st.markdown(prompt)
+                        st.session_state.messages.append({"role": "user", "content": prompt})
 
-                    context = f"""
-                    You are a Senior Quantitative Analyst AI. Answer concisely.
-                    CURRENT MARKET CONTEXT:
-                    - Asset: {st.session_state.selected_crypto}
-                    - Latest Price: {currency_sym}{latest_price:,.2f}
-                    - Daily Return: {latest_ret:.2f}%
-                    - Annualized Volatility: {latest_vol:.2f}%
-                    """
-                    full_prompt = f"{context}\n\nUser Question: {prompt}"
+                        context = f"""
+                        You are a Senior Quantitative Analyst AI. Answer concisely.
+                        CURRENT MARKET CONTEXT:
+                        - Asset: {st.session_state.selected_crypto}
+                        - Latest Price: {currency_sym}{latest_price:,.2f}
+                        - Daily Return: {latest_ret:.2f}%
+                        - Annualized Volatility: {latest_vol:.2f}%
+                        """
+                        full_prompt = f"{context}\n\nUser Question: {prompt}"
 
-                    with st.chat_message("assistant"):
-                        with st.spinner("Analyzing market data..."):
-                            response = model.generate_content(full_prompt)
-                            st.markdown(response.text)
-                    
-                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                        with st.chat_message("assistant"):
+                            display_model_name = target_model.replace("models/", "")
+                            with st.spinner(f"Analyzing using {display_model_name}..."):
+                                response = model.generate_content(full_prompt)
+                                st.markdown(response.text)
+                        
+                        st.session_state.messages.append({"role": "assistant", "content": response.text})
 
             except Exception as e:
-                st.error(f"API Error: {e}. Please check your API key.")
+                st.error(f"API Connection Error: Please verify your API Key. Details: {e}")
         else:
             st.warning("⚠️ Enter your API Key in the sidebar or Streamlit Secrets to chat with the AI.")
 
