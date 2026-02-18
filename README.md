@@ -413,12 +413,21 @@ Portfolio diversification analysis
 This application is developed for educational purposes under BTEC CRS Mathematics for AI-II.
 
 It does not provide financial advice.
+👨‍💻 Credits
 
-👨‍💻 Developer
+Name: N.Naman jain
 
-Naman Jain
-BTEC CRS – Mathematics for AI-II
-FinTechLab Project Theme
+Class: 11-IB 
+
+Roll No: 1000407 
+
+Class Teacher: Mrs.syedalibeema s 
+
+Subject: Computer Science / AI
+
+Project: MedTimer – Crypto Volatility
+
+School Name: Jain Vidyalaya
 
 🧠 Suggested Viva Questions
 
