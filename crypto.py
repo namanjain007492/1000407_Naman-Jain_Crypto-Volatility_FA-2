@@ -27,21 +27,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 HELPER FUNCTIONS 
+# 🔹 DATA LOADING & INTEGRATION (CSV FOCUS)
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data(symbol, start_date, end_date):
-    # --- FILE INTEGRATION LOGIC ---
-    file_path = 'btcusd_1-min_data.csv.crdownload'
-    if os.path.exists(file_path) and "BTC" in symbol:
+    # CSV filename provided in project
+    csv_file = 'btcusd_1-min_data.csv.crdownload'
+    
+    # Check if CSV exists and we are looking at BTC
+    if os.path.exists(csv_file) and "BTC" in symbol:
         try:
-            df_raw = pd.read_csv(file_path)
-            # Convert Unix Timestamp to Datetime
-            df_raw['Date'] = pd.to_datetime(df_raw['Timestamp'], unit='s')
-            df_raw.set_index('Date', inplace=True)
+            df_csv = pd.read_csv(csv_file)
+            # 1. Convert Unix Timestamp to Datetime
+            df_csv['Date'] = pd.to_datetime(df_csv['Timestamp'], unit='s')
+            df_csv.set_index('Date', inplace=True)
             
-            # Resample 1-minute data to Daily for the app's indicators
-            df_daily = df_raw.resample('D').agg({
+            # 2. Resample 1-min data to Daily for volatility calculations
+            # Using 'D' resampling to match the financial math in the app
+            df_daily = df_csv.resample('D').agg({
                 'Open': 'first',
                 'High': 'max',
                 'Low': 'min',
@@ -50,105 +53,76 @@ def load_data(symbol, start_date, end_date):
             }).dropna()
             
             df_daily.reset_index(inplace=True)
+            df_daily['Date'] = df_daily['Date'].dt.tz_localize(None)
             
-            # Filter by selected date range
+            # 3. Filter by User Date Range
             mask = (df_daily['Date'].dt.date >= start_date) & (df_daily['Date'].dt.date <= end_date)
-            df_filtered = df_daily.loc[mask].copy()
+            df_final = df_daily.loc[mask].copy()
             
-            if not df_filtered.empty:
-                return df_filtered, False  # Data is real CSV data
+            if not df_final.empty:
+                return df_final, False # Return as real data
         except Exception as e:
-            st.warning(f"CSV loading failed: {e}. Falling back to API/Simulation.")
+            st.sidebar.error(f"Error loading CSV: {e}")
 
-    # --- ORIGINAL FALLBACK LOGIC ---
+    # Fallback to YFinance or Simulation if CSV fails/isn't BTC
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
-    
     try:
         df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False, progress=False)
         if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [c[0] for c in df.columns]
+            if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
             df.reset_index(inplace=True)
-            if "Date" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-            return df, False  
-    except Exception:
-        pass
+            df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+            return df, False
+    except: pass
 
-    # Simulation fallback
-    days = (end_date - start_date).days
-    if days < 30: days = 365
-    np.random.seed(42 if "BTC" in symbol else 43)
-    dates = pd.date_range(start=start_str, periods=days, freq="D")
-    base_price = 50000 if "BTC" in symbol else 3000
-    volatility = 0.03
-    returns = np.random.normal(0.001, volatility, days)
-    prices = base_price * np.exp(np.cumsum(returns))
-    df_fallback = pd.DataFrame({
-        "Date": dates,
-        "Open": prices * np.random.uniform(0.98, 1.01, days),
-        "High": prices * np.random.uniform(1.01, 1.05, days),
-        "Low": prices * np.random.uniform(0.95, 0.99, days),
-        "Close": prices,
-        "Volume": np.random.uniform(10000, 500000, days)
-    })
-    return df_fallback, True  
+    # Absolute fallback: Simulation
+    days = (end_date - start_date).days if (end_date - start_date).days > 30 else 365
+    dates = pd.date_range(end=datetime.now(), periods=days)
+    prices = 50000 * np.exp(np.cumsum(np.random.normal(0.001, 0.03, days)))
+    df_sim = pd.DataFrame({"Date": dates, "Open": prices*0.99, "High": prices*1.02, "Low": prices*0.98, "Close": prices, "Volume": np.random.randint(1000, 5000, days)})
+    return df_sim, True
 
 def clean_data(df):
     if df.empty: return df
     df.columns = [str(c).capitalize() for c in df.columns]
-    if "Close" in df.columns:
-        df.rename(columns={"Close": "Price"}, inplace=True)
+    if "Close" in df.columns: df.rename(columns={"Close": "Price"}, inplace=True)
     df.ffill(inplace=True)
-    if "Price" in df.columns:
-        df.dropna(subset=["Price"], inplace=True) 
     return df
 
 def calculate_indicators(df, window=20):
+    df = df.copy()
     df["Daily_Return"] = df["Price"].pct_change()
     df["Rolling_Mean"] = df["Price"].rolling(window=window).mean()
     df["Rolling_Std"] = df["Daily_Return"].rolling(window=window).std()
     df["Rolling_Volatility"] = df["Rolling_Std"] * np.sqrt(252)
-    df["Cumulative_Return"] = (1 + df["Daily_Return"]).cumprod() - 1
-    
     df["BB_Upper"] = df["Rolling_Mean"] + (df["Price"].rolling(window=window).std() * 2)
     df["BB_Lower"] = df["Rolling_Mean"] - (df["Price"].rolling(window=window).std() * 2)
     
-    ema_12 = df["Price"].ewm(span=12, adjust=False).mean()
-    ema_26 = df["Price"].ewm(span=26, adjust=False).mean()
-    df["MACD"] = ema_12 - ema_26
-    df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
-    
+    # RSI
     delta = df["Price"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df["RSI"] = 100 - (100 / (1 + rs))
+    df["RSI"] = 100 - (100 / (1 + (gain/loss)))
     
-    cumulative_max = df["Price"].cummax()
-    df["Drawdown"] = (df["Price"] - cumulative_max) / cumulative_max
+    # MACD
+    ema12 = df["Price"].ewm(span=12).mean()
+    ema26 = df["Price"].ewm(span=26).mean()
+    df["MACD"] = ema12 - ema26
+    df["MACD_Signal"] = df["MACD"].ewm(span=9).mean()
     
+    df["Drawdown"] = (df["Price"] - df["Price"].cummax()) / df["Price"].cummax()
     return df.dropna()
 
-def simulate_patterns(df, mode, amp, freq, drift, noise_int):
-    t = np.arange(len(df))
-    base = float(df["Price"].iloc[0])
-    if mode == "Sine wave": sim = base + amp * np.sin(2 * np.pi * freq * (t / len(t)))
-    elif mode == "Cosine wave": sim = base + amp * np.cos(2 * np.pi * freq * (t / len(t)))
-    elif mode == "Random noise": sim = base + np.random.normal(0, noise_int, len(t))
-    elif mode == "Drift (integral effect)": sim = base + drift * t 
-    else: sim = base + drift * t + amp * np.sin(2 * np.pi * freq * (t / len(t))) + np.random.normal(0, noise_int, len(t))
-    return sim
-
+# ==========================================
+# 🔹 AI & MASCOT RENDERING
+# ==========================================
 def render_3d_mascot(volatility_state):
     colors = {"Low": "#00ff00", "Medium": "#ffff00", "High": "#ff0000"}
     hex_color = colors.get(volatility_state, "#00ff00")
     html_code = f"""
     <div id="mascot-container" style="width: 100%; height: 220px; display: flex; justify-content: center; align-items: center; position: relative;">
-        <div style="position: absolute; top: 10px; background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 15px; color: white; font-family: sans-serif; font-size: 12px;">
-            AI: Market is {volatility_state} Risk
-        </div>
+        <div style="position: absolute; top: 10px; background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 15px; color: white; font-family: sans-serif; font-size: 12px;">AI: Market is {volatility_state} Risk</div>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
@@ -158,21 +132,14 @@ def render_3d_mascot(volatility_state):
         renderer.setSize(220, 220);
         document.getElementById('mascot-container').appendChild(renderer.domElement);
         const geometry = new THREE.OctahedronGeometry(1.5, 0);
-        const material = new THREE.MeshStandardMaterial({{ 
-            color: "{hex_color}", wireframe: true, emissive: "{hex_color}", emissiveIntensity: 0.6 
-        }});
+        const material = new THREE.MeshStandardMaterial({{ color: "{hex_color}", wireframe: true, emissive: "{hex_color}", emissiveIntensity: 0.6 }});
         const gem = new THREE.Mesh(geometry, material);
         scene.add(gem);
         const light = new THREE.PointLight(0xffffff, 1, 100);
         light.position.set(10, 10, 10);
         scene.add(light);
         camera.position.z = 3.5;
-        function animate() {{
-            requestAnimationFrame(animate);
-            gem.rotation.x += 0.01;
-            gem.rotation.y += 0.02;
-            renderer.render(scene, camera);
-        }}
+        function animate() {{ requestAnimationFrame(animate); gem.rotation.x += 0.01; gem.rotation.y += 0.02; renderer.render(scene, camera); }}
         animate();
     </script>
     """
@@ -180,83 +147,74 @@ def render_3d_mascot(volatility_state):
 
 def ai_analysis(df):
     latest_vol = float(df["Rolling_Volatility"].iloc[-1])
-    if latest_vol < 0.4: state, color, explanation = "Low", "green", "Prices are relatively stable."
-    elif latest_vol < 0.7: state, color, explanation = "Medium", "orange", "Normal market fluctuations occurring."
-    else: state, color, explanation = "High", "red", "Expect large swings. Capital preservation advised."
+    if latest_vol < 0.4: state, color = "Low", "green"
+    elif latest_vol < 0.7: state, color = "Medium", "orange"
+    else: state, color = "High", "red"
     st.markdown(f"### 🤖 AI Assessment: **:{color}[{state} Volatility]**")
-    st.info(f"**Analysis:** {explanation}")
     return state
 
-def generate_pdf_report(df, vol_state, symbol, currency_sym):
-    report_content = f"CRYPTO VOLATILITY REPORT: {symbol}\nGenerated: {datetime.today().strftime('%Y-%m-%d')}\nFinal Price: {currency_sym}{float(df['Price'].iloc[-1]):,.2f}"
-    b64 = base64.b64encode(report_content.encode()).decode()
-    href = f'<a href="data:file/txt;base64,{b64}" download="{symbol}_Report.txt" class="metric-card" style="color:#00ffcc; text-decoration:none;">📄 Download Report</a>'
-    st.markdown(href, unsafe_allow_html=True)
-
 # ==========================================
-# 🔹 MAIN DASHBOARD 
+# 🔹 MAIN DASHBOARD
 # ==========================================
 def main():
-    st.title("⚡ Crypto Volatility Visualizer – Elite Public Edition")
-    
-    if "selected_crypto" not in st.session_state:
-        st.session_state.selected_crypto = "BTC-USD"
-    if "currency" not in st.session_state:
-        st.session_state.currency = "USD"
-    
+    st.title("⚡ Crypto Volatility Visualizer – Project Edition")
+
     with st.sidebar:
-        st.header("⚙️ Settings Panel")
+        st.header("⚙️ Data Settings")
         
-        # --- ADJUST DEFAULT DATES IF LOCAL CSV EXISTS ---
-        file_path = 'btcusd_1-min_data.csv.crdownload'
-        default_start = pd.to_datetime("2012-01-01") if os.path.exists(file_path) else pd.to_datetime("2023-01-01")
-        default_end = pd.to_datetime("2013-03-18") if os.path.exists(file_path) else datetime.today().date()
+        # Detected Date Range for CSV (2012-2013)
+        csv_detected = os.path.exists('btcusd_1-min_data.csv.crdownload')
+        default_start = pd.to_datetime("2012-01-01") if csv_detected else pd.to_datetime("2023-01-01")
+        default_end = pd.to_datetime("2013-03-18") if csv_detected else datetime.today().date()
         
         date_range = st.date_input("Date Range", [default_start, default_end])
-        if len(date_range) != 2: st.stop()
-            
-        symbol = st.selectbox("Crypto Selector", ["BTC-USD", "ETH-USD", "SOL-USD"], index=0)
-        st.session_state.selected_crypto = symbol
+        symbol = st.selectbox("Asset Selection", ["BTC-USD", "ETH-USD", "SOL-USD"])
         
-        vol_window = st.slider("Volatility Window", 5, 50, 20)
-        sim_toggle = st.checkbox("Enable Simulation Mode")
+        if csv_detected and "BTC" in symbol:
+            st.success("📁 Using local CSV Data")
+        
+        vol_window = st.slider("Smoothing Window", 5, 50, 20)
+        sim_toggle = st.checkbox("Enable Math Simulation Mode")
 
-    # --- DATA PIPELINE ---
-    raw_df, is_simulated = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
-    
-    if raw_df.empty:
-        st.error("⚠️ No data found for the selected range.")
-        st.stop()
-        
+    # Pipeline
+    raw_df, is_simulated = load_data(symbol, date_range[0], date_range[1])
     df = clean_data(raw_df)
     df = calculate_indicators(df, window=vol_window)
-    
-    # --- UI DISPLAY ---
-    c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(f'<div class="metric-card"><div class="metric-label">Price</div><div class="metric-value">${float(df["Price"].iloc[-1]):,.2f}</div></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="metric-card"><div class="metric-label">Volatility</div><div class="metric-value">{float(df["Rolling_Volatility"].iloc[-1])*100:.2f}%</div></div>', unsafe_allow_html=True)
 
-    t1, t2, t3 = st.tabs(["📊 Charts", "📐 Simulation", "🧠 AI Analysis"])
+    # Metrics
+    c1, c2, c3, c4 = st.columns(4)
+    price = float(df["Price"].iloc[-1])
+    vol = float(df["Rolling_Volatility"].iloc[-1]) * 100
+    c1.markdown(f'<div class="metric-card"><div class="metric-label">Price</div><div class="metric-value">${price:,.2f}</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="metric-card"><div class="metric-label">Annual Vol</div><div class="metric-value">{vol:.2f}%</div></div>', unsafe_allow_html=True)
+
+    # Tabs
+    t1, t2, t3 = st.tabs(["📊 Main Graphs", "📐 Simulation", "🧠 AI Insights"])
     
     with t1:
-        fig1 = px.line(df, x="Date", y="Price", title=f"Price Trend ({symbol})")
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(px.line(df, x="Date", y="Price", title="Price Movement"), use_container_width=True)
+        st.plotly_chart(px.line(df, x="Date", y="Rolling_Volatility", title="Volatility Over Time"), use_container_width=True)
         
-        fig_vol = px.line(df, x="Date", y="Rolling_Volatility", title="Rolling Volatility")
-        st.plotly_chart(fig_vol, use_container_width=True)
+        # Bollinger Bands
+        fig_bb = go.Figure()
+        fig_bb.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Price"))
+        fig_bb.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"], name="Upper BB", line=dict(dash='dot')))
+        fig_bb.add_trace(go.Scatter(x=df["Date"], y=df["BB_Lower"], name="Lower BB", line=dict(dash='dot')))
+        st.plotly_chart(fig_bb, use_container_width=True)
 
     with t2:
         if sim_toggle:
-            df["Simulated"] = simulate_patterns(df, "Combined", 5000, 5, 10, 2000)
-            fig_sim = go.Figure()
-            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Real Price"))
-            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Simulated"], name="Simulated"))
+            t = np.arange(len(df))
+            df["Sim"] = df["Price"].iloc[0] + 500 * np.sin(2 * np.pi * 5 * (t / len(t)))
+            fig_sim = px.line(df, x="Date", y=["Price", "Sim"], title="Price vs Sine Simulation")
             st.plotly_chart(fig_sim, use_container_width=True)
+        else:
+            st.info("Enable Simulation in sidebar to see math models.")
 
     with t3:
         vol_state = ai_analysis(df)
         render_3d_mascot(vol_state)
-        generate_pdf_report(df, vol_state, symbol, "$")
+        st.dataframe(df.tail())
 
 if __name__ == "__main__":
     main()
