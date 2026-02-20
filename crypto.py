@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
@@ -26,45 +25,34 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔹 HELPER FUNCTIONS 
+# 🔹 DATA PIPELINE (Reading from Local CSV) 
 # ==========================================
 @st.cache_data(ttl=3600)
-def load_data(symbol, start_date, end_date):
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = (end_date + timedelta(days=1)).strftime('%Y-%m-%d')
-    
+def load_base_csv():
+    """Loads the 1-minute CSV and resamples to Daily Data for performance."""
+    file_path = "btcusd_1-min_data.csv.crdownload"
     try:
-        df = yf.download(symbol, start=start_str, end=end_str, auto_adjust=False, progress=False)
-        if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [c[0] for c in df.columns]
-            df.reset_index(inplace=True)
-            if "Date" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-            return df, False  
-    except Exception:
-        pass
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
+        return pd.DataFrame()
 
-    days = (end_date - start_date).days
-    if days < 30: days = 365
+    # Convert Unix Timestamp to Datetime
+    if 'Timestamp' in df.columns:
+        df['Date'] = pd.to_datetime(df['Timestamp'], unit='s')
+        df.drop(columns=['Timestamp'], inplace=True)
     
-    np.random.seed(42 if "BTC" in symbol else (43 if "ETH" in symbol else 44))
-    dates = pd.date_range(start=start_str, periods=days, freq="D")
-    base_price = 50000 if "BTC" in symbol else (3000 if "ETH" in symbol else 100)
-    volatility = 0.03 if "BTC" in symbol else 0.04
+    # Resample 1-min data to Daily to prevent browser crashing and match volatility math
+    df.set_index('Date', inplace=True)
+    df_daily = df.resample('D').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }).dropna().reset_index()
     
-    returns = np.random.normal(0.001, volatility, days)
-    prices = base_price * np.exp(np.cumsum(returns))
-    
-    df_fallback = pd.DataFrame({
-        "Date": dates,
-        "Open": prices * np.random.uniform(0.98, 1.01, days),
-        "High": prices * np.random.uniform(1.01, 1.05, days),
-        "Low": prices * np.random.uniform(0.95, 0.99, days),
-        "Close": prices,
-        "Volume": np.random.uniform(10000, 500000, days)
-    })
-    return df_fallback, True  
+    return df_daily
 
 def clean_data(df):
     if df.empty: return df
@@ -199,12 +187,21 @@ def generate_pdf_report(df, vol_state, symbol, currency_sym):
 # 🔹 MAIN DASHBOARD 
 # ==========================================
 def main():
-    st.title("⚡ Crypto Volatility Visualizer – Elite Public Edition")
+    st.title("⚡ Crypto Volatility Visualizer – Elite Local CSV Edition")
     
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD"
     if "currency" not in st.session_state:
         st.session_state.currency = "USD"
+        
+    # Load Base CSV First to establish Date Limits
+    base_df = load_base_csv()
+    if base_df.empty:
+        st.stop()
+        
+    min_csv_date = base_df['Date'].min().date()
+    max_csv_date = base_df['Date'].max().date()
+    default_start = max(min_csv_date, max_csv_date - timedelta(days=365)) # Default to last 1 year of data
     
     with st.sidebar:
         st.header("🔑 AI Assistant API")
@@ -246,7 +243,7 @@ def main():
             st.session_state.selected_crypto = symbol
             st.rerun() 
             
-        date_range = st.date_input("Date Range", [pd.to_datetime("2023-01-01"), datetime.today().date()], key="date_range_widget")
+        date_range = st.date_input("Date Range", [default_start, max_csv_date], min_value=min_csv_date, max_value=max_csv_date, key="date_range_widget")
         if len(date_range) != 2:
             st.warning("Please select an end date.")
             st.stop()
@@ -254,7 +251,7 @@ def main():
         vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20, key="vol_window_widget")
         
         st.markdown("---")
-        st.subheader("📐 Math Simulation")
+        st.subheader("📐 Math Simulation (FA-2)")
         sim_toggle = st.checkbox("Enable Simulation Mode", key="sim_toggle_widget")
         sim_mode = st.selectbox("Pattern", ["Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)", "Combined mode"], key="sim_mode_widget")
         amp = st.slider("Amplitude", 1000, 20000, 5000, key="amp_widget")
@@ -262,15 +259,13 @@ def main():
         drift = st.slider("Drift slope", -100.0, 100.0, 10.0, key="drift_widget")
         noise = st.slider("Noise intensity", 500, 10000, 2000, key="noise_widget")
 
-    # --- DATA PIPELINE ---
-    raw_df, is_simulated = load_data(st.session_state.selected_crypto, date_range[0], date_range[1])
+    # --- DATA FILTERING ---
+    mask = (base_df['Date'].dt.date >= date_range[0]) & (base_df['Date'].dt.date <= date_range[1])
+    raw_df = base_df.loc[mask].copy()
     
     if raw_df.empty:
-        st.error("⚠️ Data pipeline failed entirely. Please refresh.")
+        st.error("⚠️ Selected date range contains no data. Please select a different range.")
         st.stop()
-        
-    if is_simulated:
-        st.warning("📡 **Network Alert:** Yahoo Finance API blocked the cloud connection. Loaded high-fidelity simulated market data to maintain functionality.")
         
     df = clean_data(raw_df)
     
@@ -286,11 +281,11 @@ def main():
         st.stop()
 
     # --- METRICS & AI UI ---
-    with st.expander("📊 View Dataset Details (Stage 4 Requirements)"):
+    with st.expander("📊 View Local CSV Dataset Details (Stage 4)"):
         st.write(f"**Dataset Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
-        st.write(f"**Data Source:** {'Real Market Data' if not is_simulated else 'Simulated Fallback Data'}")
+        st.write(f"**Data Source:** Local File (`btcusd_1-min_data.csv.crdownload`)")
         st.dataframe(df.head())
-        st.markdown("Missing values handled using `ffill()` to prevent look-ahead bias.")
+        st.markdown("Missing values handled using `ffill()` and resampled to Daily timeframe for calculation performance.")
 
     latest_price = float(df["Price"].iloc[-1])
     latest_ret = float(df["Daily_Return"].iloc[-1]) * 100
@@ -311,12 +306,9 @@ def main():
         st.progress(min(int(latest_vol), 100), text=f"Risk Meter: {latest_vol:.1f}%")
         generate_pdf_report(df, vol_state, symbol, currency_sym)
     with col_ai1:
-        if latest_vol < 40:
-            mascot_color = "Low"
-        elif latest_vol < 70:
-            mascot_color = "Medium"
-        else:
-            mascot_color = "High"
+        if latest_vol < 40: mascot_color = "Low"
+        elif latest_vol < 70: mascot_color = "Medium"
+        else: mascot_color = "High"
         render_3d_mascot(mascot_color)
 
     st.markdown("---")
@@ -328,11 +320,9 @@ def main():
         st.subheader("Advanced Price Charts")
         chart_type = st.radio("Chart Type", ["Line Chart", "Candlestick (OHLC)"], horizontal=True)
         
-        max_price = df["Price"].max()
-        min_price = df["Price"].min()
+        max_price, min_price = df["Price"].max(), df["Price"].min()
         diff = max_price - min_price
-        fib_38 = max_price - 0.382 * diff
-        fib_61 = max_price - 0.618 * diff
+        fib_38, fib_61 = max_price - 0.382 * diff, max_price - 0.618 * diff
         
         if chart_type == "Line Chart":
             fig1 = px.line(df, x="Date", y="Price", title=f"Price vs Date ({currency_sym})")
@@ -381,12 +371,12 @@ def main():
         if sim_toggle:
             df["Simulated"] = simulate_patterns(df, sim_mode, amp, freq, drift, noise)
             fig_sim = go.Figure()
-            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Real Price"))
+            fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Real Local Data Price"))
             fig_sim.add_trace(go.Scatter(x=df["Date"], y=df["Simulated"], name=f"Simulated ({sim_mode})"))
-            fig_sim.update_layout(title="Real vs Mathematical Simulated Price", template="plotly_dark")
+            fig_sim.update_layout(title="Real Data vs Mathematical Simulated Pattern", template="plotly_dark")
             st.plotly_chart(fig_sim, use_container_width=True)
         else:
-            st.info("👈 Enable Simulation Mode in the sidebar to view mathematical models.")
+            st.info("👈 Enable Simulation Mode in the sidebar to overlay mathematical models on your local data.")
             
     with t3:
         if st.button("Run Monte Carlo Simulation", key="btn_mc"):
@@ -406,7 +396,7 @@ def main():
             st.plotly_chart(fig_mc, use_container_width=True)
             
         if st.button("Run Neural Network Forecast", key="btn_nn"):
-            st.write("Training Simple Neural Network (LSTM Alternative)...")
+            st.write("Training Simple Neural Network on Local Data...")
             data = df[["Price"]].values
             scaler = MinMaxScaler()
             scaled_data = scaler.fit_transform(data)
@@ -432,20 +422,19 @@ def main():
             st.plotly_chart(fig_nn, use_container_width=True)
             
         if st.button("Run Multi-Crypto Optimizer", key="btn_opt"):
-            st.write("Fetching multi-crypto correlation data (BTC, ETH, SOL)...")
-            try:
-                d1 = date_range[0].strftime('%Y-%m-%d')
-                d2 = (date_range[1] + timedelta(days=1)).strftime('%Y-%m-%d')
-                data = yf.download(["BTC-USD", "ETH-USD", "SOL-USD"], start=d1, end=d2, progress=False)
-                if isinstance(data.columns, pd.MultiIndex):
-                    returns = data['Close'].pct_change().dropna()
-                else:
-                    returns = data.pct_change().dropna()
-                corr = returns.corr()
-                fig_corr = px.imshow(corr, text_auto=True, title="💼 Multi-Crypto Correlation Matrix", color_continuous_scale="Viridis")
-                st.plotly_chart(fig_corr, use_container_width=True)
-            except Exception as e:
-                st.error("⚠️ Multi-Crypto correlation failed due to Yahoo Finance rate limits.")
+            st.write("Generating simulated multi-crypto correlation data since internet fetching is disabled...")
+            
+            # Since we can't fetch external ETH/SOL, we simulate them mathematically based on your BTC data
+            # to keep the feature working completely offline.
+            sim_crypto = pd.DataFrame()
+            sim_crypto['BTC-USD'] = df['Price']
+            sim_crypto['ETH-USD'] = df['Price'] * np.random.normal(1.0, 0.02, len(df))
+            sim_crypto['SOL-USD'] = df['Price'] * np.random.normal(1.0, 0.04, len(df))
+            
+            returns = sim_crypto.pct_change().dropna()
+            corr = returns.corr()
+            fig_corr = px.imshow(corr, text_auto=True, title="💼 Offline Simulated Crypto Correlation Matrix", color_continuous_scale="Viridis")
+            st.plotly_chart(fig_corr, use_container_width=True)
             
         st.markdown("---")
         st.subheader("⏯ Animated Price Replay")
@@ -471,16 +460,11 @@ def main():
         if gemini_api_key:
             try:
                 genai.configure(api_key=gemini_api_key)
-                
-                # --- AUTO-DISCOVERY FIX ---
-                # This fetches exactly which models your API key is allowed to use.
-                # It guarantees we don't get a 404 error by blindly guessing the name.
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 
                 if not available_models:
                     st.error("API Error: Your API key is valid but doesn't have text generation access.")
                 else:
-                    # Pick the best text model available on your specific key
                     target_model = available_models[0]
                     for m in available_models:
                         if 'flash' in m or 'pro' in m:
@@ -503,7 +487,7 @@ def main():
 
                         context = f"""
                         You are a Senior Quantitative Analyst AI. Answer concisely.
-                        CURRENT MARKET CONTEXT:
+                        CURRENT MARKET CONTEXT (Based on Local CSV Data):
                         - Asset: {st.session_state.selected_crypto}
                         - Latest Price: {currency_sym}{latest_price:,.2f}
                         - Daily Return: {latest_ret:.2f}%
