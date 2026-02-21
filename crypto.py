@@ -89,7 +89,7 @@ def calculate_indicators(df, window=20):
     return df.dropna()
 
 # ==========================================
-# 🔹 MATHEMATICS SIMULATION ENGINE (FA-2 RUBRIC)
+# 🔹 MATHEMATICS SIMULATION ENGINE 
 # ==========================================
 def simulate_patterns(df, mode, amp, freq, drift, noise_int):
     """Applies Sine, Cosine, Drift (Integral), and Noise to the baseline price."""
@@ -162,7 +162,7 @@ def ai_analysis(df):
 # 🔹 MAIN DASHBOARD 
 # ==========================================
 def main():
-    st.title("⚡ Crypto Volatility Visualizer – FA-2 Math Edition")
+    st.title("⚡ Crypto Volatility Visualizer )
     
     if "selected_crypto" not in st.session_state:
         st.session_state.selected_crypto = "BTC-USD (Local Data)"
@@ -203,7 +203,7 @@ def main():
         vol_window = st.slider("Volatility Smoothing Window", 5, 50, 20)
         
         st.markdown("---")
-        st.subheader("📐 Math Parameters (FA-2)")
+        st.subheader("📐 Math Parameters ")
         sim_mode = st.selectbox("Mathematical Pattern", ["Combined mode", "Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)"])
         amp = st.slider("Wave Amplitude", 1000, 20000, 5000)
         freq = st.slider("Wave Frequency", 0.5, 20.0, 5.0)
@@ -250,10 +250,10 @@ def main():
     st.markdown("---")
 
     # --- TABS ---
-    t1, t2, t3, t4 = st.tabs(["📐 FA-2 Math Simulation", "📊 Core Visualizations", "🧠 AI Quant Tools", "🤖 Gemini Chat"])
+    t1, t2, t3, t4 = st.tabs(["📐 Math Simulation", "📊 Core Visualizations", "🧠 AI Quant Tools", "🤖 Gemini Chat"])
     
     with t1:
-        st.header("FA-2 Rubric: Mathematical Functions & Price Swings")
+        st.header(" Mathematical Functions & Price Swings")
         st.write("This section demonstrates how mathematical functions are used to synthesize wave-like price swings, sudden random noise jumps, and long-term integral drift against your actual local CSV data.")
         
         # Calculate simulation
@@ -426,7 +426,7 @@ def main():
             st.warning("⚠️ Enter your API Key in the sidebar to chat with the AI.")
 
     st.markdown("---")
-    st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>BTEC CRS AI-II FA-2 Project | Educational Purposes Only</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>BTEC CRS AI Project | Educational Purposes Only</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
