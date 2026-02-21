@@ -287,6 +287,34 @@ def main():
         st.markdown("</div>", unsafe_allow_html=True)
         
     with t2:
+        st.header("Stage 5: Core Visualizations (Assignment Requirements)")
+        
+        # 1. Line Graph of Price Over Time
+        fig_line = px.line(df, x="Date", y="Price", title="1. Line Graph of Price Over Time")
+        fig_line.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_line, use_container_width=True)
+        
+        # 2. High vs Low Comparison
+        fig_hl = go.Figure()
+        fig_hl.add_trace(go.Scatter(x=df["Date"], y=df["High"], name="High Price", line=dict(color='#00ffcc')))
+        fig_hl.add_trace(go.Scatter(x=df["Date"], y=df["Low"], name="Low Price", line=dict(color='#ff007f')))
+        fig_hl.update_layout(title="2. High vs Low Comparison", template="plotly_dark")
+        st.plotly_chart(fig_hl, use_container_width=True)
+        
+        # 3. Volume Analysis
+        fig_vol = px.bar(df, x="Date", y="Volume", title="3. Volume Analysis")
+        fig_vol.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_vol, use_container_width=True)
+        
+        # 4. Stable vs Volatile Periods
+        df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
+        fig_sv = px.scatter(df, x="Date", y="Price", color="Vol_Color", 
+                            color_discrete_map={"Stable": "#00ffcc", "Volatile": "#ff007f"},
+                            title="4. Stable vs Volatile Periods")
+        fig_sv.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_sv, use_container_width=True)
+
+        st.markdown("---")
         st.subheader("Advanced Price Charts")
         
         fig1 = go.Figure(data=[go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Price'])])
@@ -294,15 +322,12 @@ def main():
         st.plotly_chart(fig1, use_container_width=True)
         
         st.plotly_chart(px.line(df, x="Date", y="Rolling_Volatility", title="Rolling Volatility (Annualized)"), use_container_width=True)
-        
-        df["Vol_Color"] = np.where(df["Rolling_Volatility"] > 0.6, "Volatile", "Stable")
-        st.plotly_chart(px.scatter(df, x="Date", y="Price", color="Vol_Color", title="Stable vs Volatile Market Regions"), use_container_width=True)
 
         fig7 = go.Figure()
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["Price"], name="Price"))
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Upper"], name="Upper Band", line=dict(dash='dot')))
         fig7.add_trace(go.Scatter(x=df["Date"], y=df["BB_Lower"], name="Lower Band", line=dict(dash='dot')))
-        fig7.update_layout(title="Bollinger Bands (Volatility Ranges)")
+        fig7.update_layout(title="Bollinger Bands (Volatility Ranges)", template="plotly_dark")
         st.plotly_chart(fig7, use_container_width=True)
             
     with t3:
