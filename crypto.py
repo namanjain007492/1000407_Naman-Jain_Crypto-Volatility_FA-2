@@ -195,7 +195,29 @@ def main():
 
         st.text_input("Current Dataset:", value="btcusd_1-min_data.csv", disabled=True)
             
-        date_range = st.date_input("Date Range", [default_start, max_csv_date], min_value=min_csv_date, max_value=max_csv_date)
+        st.markdown("---")
+        st.subheader("📅 Date Filters")
+        
+        # --- NEW DATE FEATURE: Quick Select Dropdown ---
+        timeframe = st.selectbox("Quick Select Timeframe", ["Custom", "Last 30 Days", "Last 90 Days", "Last 1 Year", "All Time"], index=3)
+        
+        if timeframe == "Last 30 Days":
+            preset_start = max_csv_date - timedelta(days=30)
+            preset_end = max_csv_date
+        elif timeframe == "Last 90 Days":
+            preset_start = max_csv_date - timedelta(days=90)
+            preset_end = max_csv_date
+        elif timeframe == "Last 1 Year":
+            preset_start = max_csv_date - timedelta(days=365)
+            preset_end = max_csv_date
+        elif timeframe == "All Time":
+            preset_start = min_csv_date
+            preset_end = max_csv_date
+        else:
+            preset_start = default_start
+            preset_end = max_csv_date
+            
+        date_range = st.date_input("Date Range", [preset_start, preset_end], min_value=min_csv_date, max_value=max_csv_date)
         if len(date_range) != 2:
             st.warning("Please select an end date.")
             st.stop()
@@ -225,7 +247,6 @@ def main():
             
     df = calculate_indicators(df, window=vol_window)
 
-    # --- THE DATE RANGE FIX IS RIGHT HERE ---
     if df.empty:
         st.warning(f"⚠️ Not enough data points to calculate the {vol_window}-day rolling indicators. Please select a wider date range or lower the Volatility Smoothing Window in the sidebar.")
         st.stop()
@@ -245,7 +266,12 @@ def main():
     col_ai1, col_ai2 = st.columns([1, 2])
     with col_ai2:
         vol_state = ai_analysis(df)
-        st.progress(min(int(latest_vol), 100), text=f"Risk Meter: {latest_vol:.1f}%")
+        
+        # --- FIX: Safe Risk Meter bounds so it never crashes over 100 ---
+        safe_progress = max(0, min(int(latest_vol), 100))
+        display_text = f"Risk Meter: {latest_vol:.1f}%" + (" (EXTREME)" if latest_vol > 100 else "")
+        st.progress(safe_progress, text=display_text)
+        
     with col_ai1:
         if latest_vol < 40: mascot_color = "Low"
         elif latest_vol < 70: mascot_color = "Medium"
