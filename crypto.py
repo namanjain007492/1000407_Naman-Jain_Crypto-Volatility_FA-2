@@ -225,6 +225,11 @@ def main():
             
     df = calculate_indicators(df, window=vol_window)
 
+    # --- THE DATE RANGE FIX IS RIGHT HERE ---
+    if df.empty:
+        st.warning(f"⚠️ Not enough data points to calculate the {vol_window}-day rolling indicators. Please select a wider date range or lower the Volatility Smoothing Window in the sidebar.")
+        st.stop()
+
     # --- METRICS UI ---
     latest_price = float(df["Price"].iloc[-1])
     latest_ret = float(df["Daily_Return"].iloc[-1]) * 100
