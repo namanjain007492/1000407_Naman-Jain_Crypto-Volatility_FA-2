@@ -40,7 +40,9 @@ def load_base_csv():
         df.drop(columns=['Timestamp'], inplace=True)
     
     df.set_index('Date', inplace=True)
-    df_daily = df.resample('D').agg({
+    
+    # FIX: Resampling to Hourly ('1H') instead of Daily to show proper price movement!
+    df_resampled = df.resample('1H').agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
@@ -48,7 +50,7 @@ def load_base_csv():
         'Volume': 'sum'
     }).dropna().reset_index()
     
-    return df_daily
+    return df_resampled
 
 def clean_data(df):
     if df.empty: return df
@@ -61,10 +63,12 @@ def clean_data(df):
     return df
 
 def calculate_indicators(df, window=20):
-    df["Daily_Return"] = df["Price"].pct_change()
+    df["Period_Return"] = df["Price"].pct_change()
     df["Rolling_Mean"] = df["Price"].rolling(window=window).mean()
-    df["Rolling_Std"] = df["Daily_Return"].rolling(window=window).std()
-    df["Rolling_Volatility"] = df["Rolling_Std"] * np.sqrt(252)
+    df["Rolling_Std"] = df["Period_Return"].rolling(window=window).std()
+    
+    # Adjusted volatility math for hourly data
+    df["Rolling_Volatility"] = df["Rolling_Std"] * np.sqrt(365 * 24)
     
     # Bollinger Bands
     df["BB_Upper"] = df["Rolling_Mean"] + (df["Price"].rolling(window=window).std() * 2)
@@ -185,7 +189,6 @@ def main():
         st.markdown("---")
         st.subheader("📅 Date Filters")
         
-        # --- NEW BULLETPROOF DATE FILTER ---
         timeframe = st.selectbox("Quick Select Timeframe", ["Custom", "Last 30 Days", "Last 90 Days", "Last 1 Year", "YTD", "All Time"], index=3)
         
         if timeframe == "Custom":
@@ -209,10 +212,10 @@ def main():
         st.markdown("---")
         st.subheader("📐 Math Parameters")
         sim_mode = st.selectbox("Mathematical Pattern", ["Combined mode", "Sine wave", "Cosine wave", "Random noise", "Drift (integral effect)"])
-        amp = st.slider("Wave Amplitude", 1000, 20000, 5000)
+        amp = st.slider("Wave Amplitude", 100, 20000, 1000)
         freq = st.slider("Wave Frequency", 0.5, 20.0, 5.0)
         drift = st.slider("Drift slope (Integral)", -100.0, 100.0, 10.0)
-        noise = st.slider("Noise intensity", 500, 10000, 2000)
+        noise = st.slider("Noise intensity", 50, 10000, 500)
 
     # --- DATA FILTERING ---
     mask = (base_df['Date'] >= start_dt) & (base_df['Date'] <= end_dt)
@@ -229,7 +232,7 @@ def main():
     df = calculate_indicators(df, window=vol_window)
 
     if df.empty:
-        st.warning(f"⚠️ Not enough data points to calculate the {vol_window}-day indicators. Please select a wider date range.")
+        st.warning(f"⚠️ Not enough data points to calculate the {vol_window}-period indicators. Please select a wider date range.")
         st.stop()
 
     # --- ADVANCED DATA EXPORT ---
@@ -242,17 +245,17 @@ def main():
     prev_price = float(df["Price"].iloc[-2]) if len(df) > 1 else latest_price
     price_delta = latest_price - prev_price
     
-    latest_ret = float(df["Daily_Return"].iloc[-1]) * 100
+    latest_ret = float(df["Period_Return"].iloc[-1]) * 100
     latest_vol = float(df["Rolling_Volatility"].iloc[-1]) * 100
     prev_vol = float(df["Rolling_Volatility"].iloc[-2]) * 100 if len(df) > 1 else latest_vol
     vol_delta = latest_vol - prev_vol
     
-    sharpe = float((df["Daily_Return"].mean() / df["Daily_Return"].std()) * np.sqrt(252))
+    sharpe = float((df["Period_Return"].mean() / df["Period_Return"].std()) * np.sqrt(365 * 24))
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Latest Price", f"{currency_sym}{latest_price:,.2f}", f"{currency_sym}{price_delta:,.2f} / Day")
-    c2.metric("Daily Return", f"{latest_ret:.2f}%", f"{latest_ret:.2f}%")
-    c3.metric("Annualized Volatility", f"{latest_vol:.2f}%", f"{vol_delta:.2f}%", delta_color="inverse") # Inverse because higher vol is usually "worse"
+    c1.metric("Latest Price", f"{currency_sym}{latest_price:,.2f}", f"{currency_sym}{price_delta:,.2f} / Period")
+    c2.metric("Period Return", f"{latest_ret:.2f}%", f"{latest_ret:.2f}%")
+    c3.metric("Annualized Volatility", f"{latest_vol:.2f}%", f"{vol_delta:.2f}%", delta_color="inverse")
     c4.metric("Sharpe Ratio", f"{sharpe:.2f}", "Risk-Adjusted Return", delta_color="off")
 
     col_ai1, col_ai2 = st.columns([1, 2])
@@ -323,8 +326,8 @@ def main():
         st.subheader("Advanced Price Charts (Enhanced)")
         
         fig1 = go.Figure(data=[go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Price'])])
-        fig1.add_trace(go.Scatter(x=df['Date'], y=df['EMA_20'], name='20-Day EMA', line=dict(color='yellow', width=1)))
-        fig1.update_layout(title=f"Candlestick Chart with 20-Day EMA ({currency_sym})", template="plotly_dark")
+        fig1.add_trace(go.Scatter(x=df['Date'], y=df['EMA_20'], name='20-Period EMA', line=dict(color='yellow', width=1)))
+        fig1.update_layout(title=f"Candlestick Chart with 20-Period EMA ({currency_sym})", template="plotly_dark")
         st.plotly_chart(fig1, use_container_width=True)
         
         fig7 = go.Figure()
@@ -334,7 +337,6 @@ def main():
         fig7.update_layout(title="Bollinger Bands (Volatility Ranges)", template="plotly_dark")
         st.plotly_chart(fig7, use_container_width=True)
 
-        # NEW: MACD Chart
         fig_macd = go.Figure()
         fig_macd.add_trace(go.Scatter(x=df["Date"], y=df["MACD"], name="MACD", line=dict(color='#00ffcc')))
         fig_macd.add_trace(go.Scatter(x=df["Date"], y=df["MACD_Signal"], name="Signal Line", line=dict(color='#ff007f')))
@@ -344,7 +346,7 @@ def main():
             
     with t3:
         if st.button("Run Monte Carlo Simulation", key="btn_mc"):
-            returns = df["Daily_Return"].dropna()
+            returns = df["Period_Return"].dropna()
             mean_return, std_return = returns.mean(), returns.std()
             last_price = float(df["Price"].iloc[-1])
             simulations = []
@@ -354,7 +356,7 @@ def main():
                 simulations.append(path)
             fig_mc = go.Figure()
             for sim in simulations: fig_mc.add_trace(go.Scatter(y=sim, mode='lines', line=dict(width=1, color='rgba(0, 255, 204, 0.05)')))
-            fig_mc.update_layout(title="🔮 Monte Carlo Simulation (100 Paths, 30 Days)", showlegend=False, template="plotly_dark")
+            fig_mc.update_layout(title="🔮 Monte Carlo Simulation (100 Paths)", showlegend=False, template="plotly_dark")
             st.plotly_chart(fig_mc, use_container_width=True)
             
         if st.button("Run Neural Network Forecast", key="btn_nn"):
@@ -376,11 +378,14 @@ def main():
                 predictions.append(next_pred)
                 last_14 = np.append(last_14[:, 1:], next_pred).reshape(1, -1)
             pred_prices = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
-            future_dates = [df["Date"].iloc[-1] + timedelta(days=i) for i in range(1, 8)]
+            
+            freq_str = 'H' 
+            future_dates = [df["Date"].iloc[-1] + timedelta(hours=i) for i in range(1, 8)]
+            
             fig_nn = go.Figure()
             fig_nn.add_trace(go.Scatter(x=df["Date"].iloc[-30:], y=df["Price"].iloc[-30:], name="Recent Actual Price"))
-            fig_nn.add_trace(go.Scatter(x=future_dates, y=pred_prices.flatten(), name="7-Day NN Forecast", line=dict(dash='dot', color='red')))
-            fig_nn.update_layout(title="🤖 Neural Network 7-Day Forecast", template="plotly_dark")
+            fig_nn.add_trace(go.Scatter(x=future_dates, y=pred_prices.flatten(), name="7-Period NN Forecast", line=dict(dash='dot', color='red')))
+            fig_nn.update_layout(title="🤖 Neural Network Forecast", template="plotly_dark")
             st.plotly_chart(fig_nn, use_container_width=True)
 
     with t4:
@@ -432,7 +437,7 @@ def main():
             st.warning("⚠️ Enter your API Key in the sidebar to chat with the AI.")
 
     st.markdown("---")
-    st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>Educational Purposes Only</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; color: gray; font-size: 12px;'>BTEC CRS AI-II Project | Educational Purposes Only</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
